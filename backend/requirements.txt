@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+groq
+deepface
+python-dotenv
+pydantic
+websockets
+python-multipart
+tf-keras
+httpx
