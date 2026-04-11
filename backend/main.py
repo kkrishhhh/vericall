@@ -13,11 +13,15 @@ from models import (
     RiskAssessmentRequest, RiskAssessmentResponse,
     OfferRequest, LoanOffer,
     RoomResponse, CustomerData,
+    SessionAuditPayload, SessionAuditResponse,
+    ExtractRequest, ExtractedProfile,
 )
 from agent import run_agent
 from vision import analyze_face
 from fraud import assess_risk
 from offer import generate_offer
+from session_log import append_session_record, read_recent_sessions
+from extraction import extract_profile_from_text
 
 # Load env from project root
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -64,9 +68,19 @@ async def agent_endpoint(req: AgentRequest):
 
 @app.post("/api/analyze-face", response_model=FaceAnalysisResponse)
 async def face_analysis_endpoint(req: FaceAnalysisRequest):
-    """Analyze a face image for age estimation."""
+    """Analyze face frame(s) for age; optional declared_age enables face-vs-claim scoring."""
+    frames = req.resolved_frames()
+    if not frames:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide `image` or `images` (base64 JPEG).",
+        )
     try:
-        result = analyze_face(req.image)
+        result = analyze_face(
+            image_base64=None,
+            images=frames,
+            declared_age=req.declared_age,
+        )
         return FaceAnalysisResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vision error: {str(e)}")
@@ -143,11 +157,42 @@ async def create_room():
 
 @app.get("/api/deepgram-token")
 async def deepgram_token():
-    """Return the Deepgram API key for frontend STT connection."""
-    key = os.environ.get("DEEPGRAM_API_KEY")
+    """Return the Deepgram API key for browser STT (used in WebSocket subprotocol, not query string)."""
+    key = (os.environ.get("DEEPGRAM_API_KEY") or "").strip()
     if not key:
         raise HTTPException(status_code=500, detail="Deepgram API key not configured")
     return {"token": key}
+
+
+# ── 7. Session audit log (JSONL) ───────────────────────────────
+
+@app.post("/api/log-session", response_model=SessionAuditResponse)
+async def log_session_endpoint(payload: SessionAuditPayload):
+    """Persist transcript summary, extracted data, risk, and offer for demos."""
+    try:
+        sid = append_session_record(payload.model_dump(exclude_none=True))
+        return SessionAuditResponse(session_id=sid, ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Logging failed: {str(e)}") from e
+
+
+@app.get("/api/audit/recent")
+async def audit_recent(limit: int = 20):
+    """Recent sessions for dashboard (newest first)."""
+    lim = max(1, min(limit, 100))
+    return {"sessions": read_recent_sessions(lim)}
+
+
+# ── 8. Structured extraction (optional second pass) ──────────
+
+@app.post("/api/extract", response_model=ExtractedProfile)
+async def extract_endpoint(req: ExtractRequest):
+    """Normalize free-form conversation text into structured onboarding fields."""
+    try:
+        data = extract_profile_from_text(req.conversation_text)
+        return ExtractedProfile(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction error: {str(e)}") from e
 
 
 if __name__ == "__main__":

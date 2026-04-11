@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
@@ -148,6 +149,11 @@ export default function LandingPage() {
         {/* Footer */}
         <p className="text-center text-xs text-slate-600 mt-8">
           © 2026 VeriCall by TenzorX · Poonawalla Fincorp Hackathon
+        </p>
+        <p className="text-center mt-3">
+          <Link href="/dashboard" className="text-xs text-indigo-400 hover:text-indigo-300 underline underline-offset-2">
+            Applications dashboard
+          </Link>
         </p>
       </div>
     </main>

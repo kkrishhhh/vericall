@@ -9,6 +9,12 @@ interface Verification {
   icon: string;
 }
 
+interface FraudFlagRow {
+  flag?: string;
+  severity?: string;
+  details?: string;
+}
+
 interface OfferCardProps {
   status: string;
   loanAmount: number;
@@ -17,10 +23,21 @@ interface OfferCardProps {
   monthlyEmi: number;
   processingFee: number;
   confidenceScore: number;
+  riskBand?: string;
+  riskScore?: number;
+  fraudFlags?: FraudFlagRow[];
+  customerSummary?: {
+    name?: string;
+    declared_age?: number;
+    income?: number;
+    employment?: string;
+    purpose?: string;
+  };
   verificationSummary: {
     age_verified?: boolean;
     age_estimate?: number | null;
     age_confidence?: number | null;
+    age_match_score?: number | null;
     location_verified?: boolean;
     income_declared?: number;
     income_verified?: boolean;
@@ -39,6 +56,10 @@ export default function OfferCard({
   monthlyEmi,
   processingFee,
   confidenceScore,
+  riskBand,
+  riskScore,
+  fraudFlags,
+  customerSummary,
   verificationSummary: v,
   onClose,
 }: OfferCardProps) {
@@ -71,14 +92,25 @@ export default function OfferCard({
 
   const cfg = statusConfig[status as keyof typeof statusConfig] || statusConfig.DECLINED;
 
+  const declared = customerSummary?.declared_age;
+  const matchPct =
+    v.age_match_score != null && v.age_match_score > 0
+      ? Math.round(v.age_match_score * 100)
+      : null;
+
   const verifications: Verification[] = [
     {
-      label: "Age verified",
-      value: v.age_estimate
-        ? `${v.age_estimate} yrs (Confidence: ${Math.round((v.age_confidence || 0) * 100)}%)`
-        : "Pending",
+      label: "Face vs claimed age",
+      value:
+        v.age_estimate != null && declared
+          ? `Looks ~${Math.round(v.age_estimate)} yrs · you said ${declared}${
+              matchPct != null ? ` · CV match ${matchPct}%` : ""
+            }`
+          : v.age_estimate != null
+            ? `Estimated ~${Math.round(v.age_estimate)} yrs (no claim to compare)`
+            : "No face / age from video",
       verified: v.age_verified || false,
-      icon: "🎂",
+      icon: "👤",
     },
     {
       label: "Location",
@@ -150,6 +182,77 @@ export default function OfferCard({
             )}
           </div>
         </motion.div>
+
+        {/* Extracted profile + risk (compact) */}
+        {(customerSummary || riskBand !== undefined) && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="px-6 py-4 border-b border-white/[0.06] space-y-3"
+          >
+            {customerSummary && (
+              <div>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                  Extracted profile
+                </h3>
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-300">
+                  <dt className="text-slate-500">Name</dt>
+                  <dd className="truncate">{customerSummary.name || "—"}</dd>
+                  <dt className="text-slate-500">Age</dt>
+                  <dd>{customerSummary.declared_age || "—"}</dd>
+                  <dt className="text-slate-500">Income</dt>
+                  <dd>
+                    {customerSummary.income
+                      ? `₹${Number(customerSummary.income).toLocaleString("en-IN")}/mo`
+                      : "—"}
+                  </dd>
+                  <dt className="text-slate-500">Employment</dt>
+                  <dd className="truncate">{customerSummary.employment || "—"}</dd>
+                  <dt className="text-slate-500">Purpose</dt>
+                  <dd className="truncate col-span-2">{customerSummary.purpose || "—"}</dd>
+                </dl>
+              </div>
+            )}
+            {(riskBand !== undefined || riskScore !== undefined) && (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-slate-500 uppercase tracking-wider">Risk</span>
+                {riskBand && (
+                  <span
+                    className={`text-xs font-semibold px-2 py-0.5 rounded-md ${
+                      riskBand === "LOW"
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : riskBand === "MEDIUM"
+                          ? "bg-amber-500/15 text-amber-300"
+                          : "bg-red-500/15 text-red-300"
+                    }`}
+                  >
+                    {riskBand}
+                  </span>
+                )}
+                {riskScore !== undefined && (
+                  <span className="text-xs text-slate-400">
+                    Score <span className="text-slate-200 font-mono">{riskScore}</span>
+                    <span className="text-slate-500"> /100</span>
+                  </span>
+                )}
+              </div>
+            )}
+            {fraudFlags && fraudFlags.length > 0 && (
+              <ul className="space-y-1.5 max-h-28 overflow-y-auto">
+                {fraudFlags.map((f, i) => (
+                  <li key={i} className="text-xs text-amber-200/90 leading-snug">
+                    <span className="font-medium text-amber-400">{f.flag}</span>
+                    {f.severity && (
+                      <span className="text-slate-500"> ({f.severity})</span>
+                    )}
+                    {f.details && <span className="text-slate-400"> — {f.details}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </motion.div>
+        )}
 
         {/* Loan Details */}
         {(isApproved || isReview) && (

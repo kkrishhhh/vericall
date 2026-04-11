@@ -23,13 +23,39 @@ class AgentResponse(BaseModel):
 # ── Vision Models ─────────────────────────────────────────────
 
 class FaceAnalysisRequest(BaseModel):
-    image: str = Field(..., description="Base64-encoded JPEG image from webcam")
+    image: Optional[str] = Field(None, description="Single base64 JPEG (data URL ok)")
+    images: Optional[list[str]] = Field(
+        None,
+        max_length=5,
+        description="Multiple frames for median age (more stable than one grab)",
+    )
+    declared_age: Optional[int] = Field(
+        None,
+        ge=1,
+        le=120,
+        description="Customer-stated age — enables face-vs-claim scoring",
+    )
+
+    def resolved_frames(self) -> list[str]:
+        if self.images:
+            return [x for x in self.images if x]
+        if self.image:
+            return [self.image]
+        return []
 
 
 class FaceAnalysisResponse(BaseModel):
-    estimated_age: float = Field(..., description="Estimated age from DeepFace")
-    confidence: float = Field(..., description="Confidence score 0-1")
-    face_detected: bool = Field(True, description="Whether a face was found in the image")
+    estimated_age: float = Field(..., description="Estimated age (median if multi-frame)")
+    confidence: float = Field(..., description="Face detection confidence ~0–1")
+    face_detected: bool = Field(True, description="Whether a face was found")
+    samples_used: int = Field(0, description="Frames that produced a face age")
+    age_delta_years: Optional[float] = Field(None, description="|estimate − declared| when declared_age sent")
+    age_match_score: float = Field(0.0, ge=0.0, le=1.0, description="1.0 = strong match to declared age")
+    looks_consistent_with_claim: Optional[bool] = Field(
+        None,
+        description="True if face appears consistent with claimed age",
+    )
+    verification_message: str = Field("", description="Human-readable CV age check summary")
 
 
 # ── Risk Assessment Models ────────────────────────────────────
@@ -43,6 +69,10 @@ class CustomerData(BaseModel):
     consent: bool = False
     estimated_age: Optional[float] = None
     age_confidence: Optional[float] = None
+    age_match_score: Optional[float] = Field(
+        None,
+        description="0–1 visual age vs claim (from /api/analyze-face)",
+    )
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
@@ -61,9 +91,11 @@ class RiskAssessmentRequest(BaseModel):
 
 class RiskAssessmentResponse(BaseModel):
     risk_band: str = Field(..., description="LOW / MEDIUM / HIGH")
+    risk_score: int = Field(0, ge=0, le=100, description="0=best, 100=highest risk")
     fraud_flags: list[FraudFlag] = Field(default_factory=list)
     eligible: bool = True
     reason: str = ""
+    decision_reasons: list[str] = Field(default_factory=list, description="Human-readable risk narrative")
 
 
 # ── Loan Offer Models ────────────────────────────────────────
@@ -92,3 +124,41 @@ class RoomResponse(BaseModel):
     room_url: str
     room_name: str
     token: Optional[str] = None
+
+
+# ── Session audit / logging ───────────────────────────────────
+
+class SessionAuditPayload(BaseModel):
+    """Payload from frontend when a call completes — stored as JSONL."""
+
+    session_id: Optional[str] = None
+    phone: Optional[str] = None
+    room_url: Optional[str] = None
+    transcript_text: str = Field("", description="Full or summarized transcript")
+    messages: Optional[list[dict]] = Field(default=None, description="Optional structured chat log")
+    extracted: dict = Field(default_factory=dict)
+    risk: dict = Field(default_factory=dict)
+    offer: dict = Field(default_factory=dict)
+    client_started_at: Optional[str] = Field(None, description="ISO timestamp from client if available")
+
+
+class SessionAuditResponse(BaseModel):
+    session_id: str
+    ok: bool = True
+
+
+# ── LLM extraction (messy speech → structured profile) ────────
+
+class ExtractRequest(BaseModel):
+    conversation_text: str = Field(..., min_length=1, description="Raw or concatenated user speech")
+
+
+class ExtractedProfile(BaseModel):
+    name: str = ""
+    age: int = 0
+    income: float = 0
+    employment: str = ""
+    loan_purpose: str = ""
+    consent: bool = False
+    extraction_confidence: float = Field(0.0, ge=0.0, le=1.0)
+    notes: str = ""

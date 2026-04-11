@@ -143,9 +143,11 @@ def _calculate_confidence(
         else:
             score -= 0.05
 
-    # Bonus for face verification
+    # Bonus for face detection + age claim alignment (CV)
     if customer.age_confidence and customer.age_confidence > 0.8:
         score += 0.05
+    if customer.age_match_score is not None and customer.age_match_score >= 0.75:
+        score += 0.04
 
     # Risk band adjustment
     if risk_band == "HIGH":
@@ -169,6 +171,7 @@ def _build_verification_summary(customer: CustomerData, fraud_flags: list[dict])
         "age_verified": age_verified,
         "age_estimate": customer.estimated_age,
         "age_confidence": customer.age_confidence,
+        "age_match_score": customer.age_match_score,
         "location_verified": location_verified,
         "income_declared": customer.income,
         "income_verified": income_verified,

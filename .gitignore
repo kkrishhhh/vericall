@@ -1,3 +1,6 @@
+# Local audit logs (JSONL)
+/data/
+
 # Environment
 .env
 .env.local

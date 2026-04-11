@@ -1,6 +1,8 @@
 """VeriCall Fraud Detection — multi-signal fraud flag engine."""
 
 from models import CustomerData, FaceAnalysisResponse, FraudFlag
+from services.risk_engine import build_decision_reasons, compute_risk_score
+from age_verification import fraud_flags_for_visual_age
 
 
 def assess_risk(
@@ -16,21 +18,15 @@ def assess_risk(
     """
     flags: list[FraudFlag] = []
 
-    # ── 1. Age Mismatch Check ─────────────────────────────────
+    # ── 1. Visual age vs claimed age (CV / DeepFace) ──────────
     if face_analysis and face_analysis.face_detected and customer.declared_age > 0:
-        age_diff = abs(face_analysis.estimated_age - customer.declared_age)
-        if age_diff > 8:
-            flags.append(FraudFlag(
-                flag="AGE_MISMATCH",
-                severity="high",
-                details=f"Declared age {customer.declared_age}, estimated {face_analysis.estimated_age:.0f} (diff: {age_diff:.0f} yrs)",
-            ))
-        elif age_diff > 5:
-            flags.append(FraudFlag(
-                flag="AGE_MINOR_DISCREPANCY",
-                severity="low",
-                details=f"Declared age {customer.declared_age}, estimated {face_analysis.estimated_age:.0f} (diff: {age_diff:.0f} yrs)",
-            ))
+        flags.extend(
+            fraud_flags_for_visual_age(
+                face_analysis.estimated_age,
+                customer.declared_age,
+                face_detected=True,
+            )
+        )
 
     # ── 2. Location Validation ────────────────────────────────
     if location:
@@ -63,7 +59,26 @@ def assess_risk(
                 details=f"Unemployed claiming ₹{customer.income:,.0f}/month income",
             ))
 
-    # ── 4. Consent Check ──────────────────────────────────────
+    # ── 4. Missing / incomplete onboarding data ────────────────
+    missing: list[str] = []
+    if not (customer.name or "").strip():
+        missing.append("name")
+    if not customer.declared_age or customer.declared_age <= 0:
+        missing.append("age")
+    if not customer.income or customer.income <= 0:
+        missing.append("income")
+    if not (customer.employment or "").strip():
+        missing.append("employment")
+    if not (customer.purpose or "").strip():
+        missing.append("loan_purpose")
+    if missing:
+        flags.append(FraudFlag(
+            flag="MISSING_CRITICAL_DATA",
+            severity="high" if len(missing) >= 2 else "medium",
+            details=f"Incomplete application fields: {', '.join(missing)}",
+        ))
+
+    # ── 5. Consent Check ──────────────────────────────────────
     if not customer.consent:
         flags.append(FraudFlag(
             flag="NO_CONSENT",
@@ -71,7 +86,7 @@ def assess_risk(
             details="Customer has not provided explicit verbal consent",
         ))
 
-    # ── 5. Age Eligibility ────────────────────────────────────
+    # ── 6. Age Eligibility ────────────────────────────────────
     if customer.declared_age > 0:
         if customer.declared_age < 21 or customer.declared_age > 55:
             flags.append(FraudFlag(
@@ -102,9 +117,14 @@ def assess_risk(
             reasons.append(f"Income ₹{customer.income:,.0f} below minimum threshold")
         reason = "; ".join(reasons)
 
+    risk_score = compute_risk_score(risk_band, flags, customer)
+    decision_reasons = build_decision_reasons(risk_band, flags, eligible, reason)
+
     return {
         "risk_band": risk_band,
+        "risk_score": risk_score,
         "fraud_flags": [f.model_dump() for f in flags],
         "eligible": eligible,
         "reason": reason,
+        "decision_reasons": decision_reasons,
     }
