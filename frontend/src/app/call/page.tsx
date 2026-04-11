@@ -46,6 +46,8 @@ function CallPageInner() {
     typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}`,
   );
   const sttCloseRef = useRef<(() => void) | null>(null);
+  const sttConnRef = useRef<import("@/lib/sttService").DeepgramSttConnection | null>(null);
+  const speakingIdRef = useRef(0);
   /** Must not put conversationHistory in sendToAgent deps — it would change every reply and re-run the STT effect (Deepgram reconnect + sendToAgent("") loop). */
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
   const initialGreetingRequestedRef = useRef(false);
@@ -321,10 +323,32 @@ function CallPageInner() {
 
       // Speak agent response using browser TTS
       if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const currentSpeakingId = ++speakingIdRef.current;
+        
+        sttConnRef.current?.setMuted(true);
+        
         const utterance = new SpeechSynthesisUtterance(data.message);
         utterance.rate = 1;
         utterance.pitch = 1;
         utterance.lang = "en-IN";
+
+        // Prevent GC of utterance before onend fires
+        (window as any)._utterances = (window as any)._utterances || [];
+        (window as any)._utterances.push(utterance);
+        
+        const cleanup = () => {
+          setTimeout(() => {
+            if (speakingIdRef.current === currentSpeakingId) {
+              sttConnRef.current?.setMuted(false);
+            }
+          }, 300);
+          (window as any)._utterances = (window as any)._utterances.filter((u: any) => u !== utterance);
+        };
+        
+        utterance.onend = cleanup;
+        utterance.onerror = cleanup;
+        
         window.speechSynthesis.speak(utterance);
       }
 
@@ -386,6 +410,7 @@ function CallPageInner() {
         });
 
         sttCloseRef.current = conn.close;
+        sttConnRef.current = conn;
 
         agentTimerRef.current = setInterval(() => {
           const accumulated = pendingTranscriptRef.current.trim();
@@ -404,6 +429,7 @@ function CallPageInner() {
       setSttStatus("idle");
       sttCloseRef.current?.();
       sttCloseRef.current = null;
+      sttConnRef.current = null;
       if (agentTimerRef.current) clearInterval(agentTimerRef.current);
     };
   }, [phase, mediaStream, BACKEND, sendToAgent]);

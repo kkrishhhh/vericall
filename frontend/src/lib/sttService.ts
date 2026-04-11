@@ -38,6 +38,7 @@ export interface DeepgramSttHandlers {
 
 export interface DeepgramSttConnection {
   close: () => void;
+  setMuted: (isMuted: boolean) => void;
 }
 
 /**
@@ -58,6 +59,7 @@ export function connectDeepgramStt(
   let source: MediaStreamAudioSourceNode | null = null;
   let mute: GainNode | null = null;
   let audioTornDown = false;
+  let isMuted = false;
 
   const cleanupAudio = () => {
     if (audioTornDown) return;
@@ -113,7 +115,7 @@ export function connectDeepgramStt(
       const inputData = e.inputBuffer.getChannelData(0);
       const pcm16 = new Int16Array(inputData.length);
       for (let i = 0; i < inputData.length; i++) {
-        pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7fff;
+        pcm16[i] = isMuted ? 0 : Math.max(-1, Math.min(1, inputData[i])) * 0x7fff;
       }
       ws.send(pcm16.buffer);
     };
@@ -162,5 +164,5 @@ export function connectDeepgramStt(
     }
   };
 
-  return { close };
+  return { close, setMuted: (m: boolean) => { isMuted = m; } };
 }
