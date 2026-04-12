@@ -15,6 +15,7 @@ from models import (
     RoomResponse, CustomerData,
     SessionAuditPayload, SessionAuditResponse,
     ExtractRequest, ExtractedProfile,
+    SendOTPRequest, VerifyOTPRequest,
 )
 from agent import run_agent
 from vision import analyze_face
@@ -193,6 +194,51 @@ async def extract_endpoint(req: ExtractRequest):
         return ExtractedProfile(**data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction error: {str(e)}") from e
+
+
+# ── 9. Simulated OTP ────────────────────────────────────────
+
+otp_store = {}
+
+@app.post("/api/send-otp")
+async def send_otp(req: SendOTPRequest):
+    """Simulate sending an OTP to a mobile number."""
+    import random
+    import time
+    
+    otp = str(random.randint(100000, 999999))
+    otp_store[req.mobile_number] = {
+        "otp": otp,
+        "expires_at": time.time() + 300
+    }
+    
+    print()
+    print("=" * 50)
+    print(f"✅ [MOCK SMS] Sent to {req.mobile_number}:")
+    print(f"   Your Aadhaar/PAN Verification OTP is {otp}")
+    print("=" * 50)
+    print()
+    
+    return {"status": "success", "message": "OTP sent to mobile number"}
+
+@app.post("/api/verify-otp")
+async def verify_otp(req: VerifyOTPRequest):
+    """Verify the simulated OTP."""
+    import time
+    
+    record = otp_store.get(req.mobile_number)
+    
+    if not record:
+        raise HTTPException(status_code=400, detail="No OTP requested for this number")
+        
+    if time.time() > record["expires_at"]:
+        raise HTTPException(status_code=400, detail="OTP expired")
+        
+    if record["otp"] == req.otp:
+        del otp_store[req.mobile_number]
+        return {"status": "success", "message": "KYC Verified Successfully"}
+        
+    raise HTTPException(status_code=400, detail="Invalid OTP")
 
 
 if __name__ == "__main__":

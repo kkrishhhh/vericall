@@ -6,26 +6,81 @@ import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
   const [phone, setPhone] = useState("");
+  const [docType, setDocType] = useState<"Aadhaar" | "PAN">("Aadhaar");
+  const [docNumber, setDocNumber] = useState("");
+  const [otp, setOtp] = useState("");
+  const [step, setStep] = useState<"phone" | "otp">("phone");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const router = useRouter();
 
-  const handleStart = async () => {
+  const handleSendOtp = async () => {
+    if (docType === "Aadhaar" && !docNumber.match(/^\d{12}$/)) {
+      setError("Please enter a valid 12-digit Aadhaar number");
+      return;
+    }
+    if (docType === "PAN" && !docNumber.match(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i)) {
+      setError("Please enter a valid 10-character PAN number (e.g. ABCDE1234F)");
+      return;
+    }
     if (phone.length < 10) {
       setError("Please enter a valid 10-digit phone number");
       return;
     }
     setError("");
+    setSuccessMsg("");
     setLoading(true);
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
-      const res = await fetch(`${backendUrl}/api/create-room`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to create room");
-      const data = await res.json();
-      router.push(`/call?room=${encodeURIComponent(data.room_url)}&phone=${encodeURIComponent(phone)}`);
+      const res = await fetch(`${backendUrl}/api/send-otp`, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobile_number: `+91${phone}` })
+      });
+      if (!res.ok) throw new Error("Failed to send OTP");
+      setSuccessMsg("OTP sent to terminal console for simulation!");
+      setStep("otp");
     } catch {
-      setError("Unable to start session. Please try again.");
+      setError("Unable to send OTP. Is the backend running?");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (otp.length < 6) {
+      setError("Please enter a valid 6-digit OTP");
+      return;
+    }
+    setError("");
+    setSuccessMsg("");
+    setLoading(true);
+
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+      const res = await fetch(`${backendUrl}/api/verify-otp`, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobile_number: `+91${phone}`, otp })
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || "Invalid OTP");
+      }
+      
+      setSuccessMsg("KYC Verified! Starting application...");
+      
+      // proceed to create room
+      const roomRes = await fetch(`${backendUrl}/api/create-room`, { method: "POST" });
+      if (!roomRes.ok) throw new Error("Failed to create room");
+      const roomData = await roomRes.json();
+      
+      router.push(`/call?room=${encodeURIComponent(roomData.room_url)}&phone=${encodeURIComponent(phone)}`);
+    } catch (err: any) {
+      setError(err.message || "Unable to start session. Please try again.");
       setLoading(false);
     }
   };
@@ -83,53 +138,151 @@ export default function LandingPage() {
             ))}
           </div>
 
-          {/* Phone Input */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Mobile Number
-            </label>
-            <div className="flex">
-              <span className="inline-flex items-center px-4 rounded-l-xl bg-white/[0.05] border border-r-0 border-white/[0.1] text-sm text-slate-400">
-                +91
-              </span>
-              <input
-                type="tel"
-                maxLength={10}
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value.replace(/\D/g, ""));
-                  setError("");
-                }}
-                placeholder="Enter your phone number"
-                className="flex-1 px-4 py-3 rounded-r-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm"
-              />
-            </div>
-            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
-          </div>
+          {step === "phone" ? (
+            <>
+              {/* Document Selection */}
+              <div className="mb-4 flex flex-col sm:flex-row gap-4">
+                <div className="sm:w-1/3">
+                  <label className="block text-sm font-medium text-slate-300 mb-2">ID Type</label>
+                  <select
+                    value={docType}
+                    onChange={(e) => {
+                      setDocType(e.target.value as "Aadhaar" | "PAN");
+                      setDocNumber("");
+                      setError("");
+                    }}
+                    className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm appearance-none"
+                  >
+                    <option value="Aadhaar" className="bg-slate-800">Aadhaar</option>
+                    <option value="PAN" className="bg-slate-800">PAN Card</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    {docType} Number
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={docType === "Aadhaar" ? 12 : 10}
+                    value={docNumber}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setDocNumber(docType === "Aadhaar" ? val.replace(/\D/g, "") : val.toUpperCase());
+                      setError("");
+                    }}
+                    placeholder={docType === "Aadhaar" ? "0000 0000 0000" : "ABCDE1234F"}
+                    className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm tracking-wider"
+                  />
+                </div>
+              </div>
 
-          {/* CTA Button */}
-          <button
-            onClick={handleStart}
-            disabled={loading}
-            className="w-full btn-primary flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <>
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Connecting...
-              </>
-            ) : (
-              <>
-                Start Application
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </>
-            )}
-          </button>
+              {/* Phone Input */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Mobile Number
+                </label>
+                <div className="flex">
+                  <span className="inline-flex items-center px-4 rounded-l-xl bg-white/[0.05] border border-r-0 border-white/[0.1] text-sm text-slate-400">
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    value={phone}
+                    onChange={(e) => {
+                      setPhone(e.target.value.replace(/\D/g, ""));
+                      setError("");
+                    }}
+                    placeholder="Enter your phone number"
+                    className="flex-1 px-4 py-3 rounded-r-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm"
+                  />
+                </div>
+                {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+                {successMsg && <p className="text-emerald-400 text-xs mt-2">{successMsg}</p>}
+              </div>
+
+              {/* CTA Button */}
+              <button
+                onClick={handleSendOtp}
+                disabled={loading}
+                className="w-full btn-primary flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Sending OTP...
+                  </>
+                ) : (
+                  <>
+                    Send OTP to Verify
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
+                  </>
+                )}
+              </button>
+            </>
+          ) : (
+            <>
+              {/* OTP Input */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Enter 6-Digit Verification Code
+                </label>
+                <div className="flex">
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={otp}
+                    onChange={(e) => {
+                      setOtp(e.target.value.replace(/\D/g, ""));
+                      setError("");
+                    }}
+                    placeholder="Enter OTP (Check Python console)"
+                    className="flex-1 w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 text-center tracking-[0.5em] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-lg"
+                  />
+                </div>
+                {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+                {successMsg && <p className="text-emerald-400 text-xs mt-2">{successMsg}</p>}
+                
+                <div className="flex justify-between mt-3 text-xs">
+                  <button onClick={() => setStep("phone")} className="text-slate-400 hover:text-white transition">
+                    Change details
+                  </button>
+                  <button onClick={handleSendOtp} className="text-indigo-400 hover:text-indigo-300 transition">
+                    Resend code
+                  </button>
+                </div>
+              </div>
+
+              {/* CTA Button */}
+              <button
+                onClick={handleVerifyOtp}
+                disabled={loading}
+                className="w-full btn-primary flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    Verify & Start Session
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </>
+                )}
+              </button>
+            </>
+          )}
 
           {/* Trust indicators */}
           <div className="mt-6 flex items-center justify-center gap-4 text-xs text-slate-500">

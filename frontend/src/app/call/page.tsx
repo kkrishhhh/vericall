@@ -187,6 +187,8 @@ function CallPageInner() {
               });
               if (faceRes.ok) {
                 faceResult = await faceRes.json();
+                console.log("FRAME SAMPLE:", frames[0]);
+                console.log("FACE RESULT:", faceResult);
                 const msg = String(faceResult.verification_message || "");
                 if (msg) setProcessingStep(msg.slice(0, 120) + (msg.length > 120 ? "…" : ""));
               }
