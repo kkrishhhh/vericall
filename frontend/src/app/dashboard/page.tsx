@@ -9,6 +9,8 @@ interface AuditSession {
   phone?: string;
   offer?: { status?: string; loan_amount?: number; monthly_emi?: number };
   risk?: { risk_band?: string; risk_score?: number; eligible?: boolean };
+  bureau?: { bureau_score?: number; score_band?: string };
+  propensity?: { score?: number; band?: string };
   extracted?: Record<string, unknown>;
 }
 
@@ -94,13 +96,15 @@ export default function DashboardPage() {
                   <th className="px-4 py-3">Time</th>
                   <th className="px-4 py-3">Session</th>
                   <th className="px-4 py-3">Risk</th>
+                  <th className="px-4 py-3">Propensity</th>
+                  <th className="px-4 py-3">Bureau</th>
                   <th className="px-4 py-3">Offer</th>
                 </tr>
               </thead>
               <tbody>
                 {sessions.length === 0 && !error && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                       No sessions logged yet. Complete a call to create an audit entry.
                     </td>
                   </tr>
@@ -117,6 +121,20 @@ export default function DashboardPage() {
                       {s.risk?.risk_band}
                       {s.risk?.risk_score != null && (
                         <span className="text-slate-500"> ({s.risk.risk_score})</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {s.propensity?.score != null
+                        ? `${Math.round(Number(s.propensity.score) * 100)}%`
+                        : "—"}
+                      {s.propensity?.band && (
+                        <span className="text-slate-500"> ({s.propensity.band})</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {s.bureau?.bureau_score ?? "—"}
+                      {s.bureau?.score_band && (
+                        <span className="text-slate-500"> ({s.bureau.score_band})</span>
                       )}
                     </td>
                     <td className="px-4 py-3">{s.offer?.status || "—"}</td>

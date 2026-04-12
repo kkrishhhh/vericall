@@ -7,7 +7,10 @@ from models import CustomerData, FraudFlag
 def generate_offer(
     customer: CustomerData,
     risk_band: str = "MEDIUM",
+    risk_score: int = 50,
     fraud_flags: list[dict] | None = None,
+    bureau: dict | None = None,
+    propensity: dict | None = None,
 ) -> dict:
     """
     Generate a personalized loan offer based on customer data and risk assessment.
@@ -16,6 +19,8 @@ def generate_offer(
         dict with loan offer details including status, amount, rate, EMI, etc.
     """
     fraud_flags = fraud_flags or []
+    bureau = bureau or {}
+    propensity = propensity or {}
     high_flags = sum(1 for f in fraud_flags if f.get("severity") == "high")
 
     # ── Determine Status ──────────────────────────────────────
@@ -32,7 +37,7 @@ def generate_offer(
         status = "DECLINED"
 
     if status == "DECLINED":
-        return _declined_offer(customer, fraud_flags)
+        return _declined_offer(customer, fraud_flags, risk_score, bureau, propensity)
 
     # ── Calculate Loan Parameters ─────────────────────────────
     # Income multiplier based on employment type
@@ -54,6 +59,20 @@ def generate_offer(
     elif risk_band == "MEDIUM":
         income_multiplier *= 0.8
         base_rate += 1.0
+
+    bureau_score = float(bureau.get("bureau_score", 650))
+    if bureau_score >= 760:
+        base_rate -= 0.7
+    elif bureau_score < 620:
+        base_rate += 1.3
+
+    propensity_score = float(propensity.get("score", 0.5))
+    if propensity_score >= 0.72:
+        base_rate -= 0.5
+        income_multiplier *= 1.05
+    elif propensity_score < 0.48:
+        base_rate += 0.8
+        income_multiplier *= 0.92
 
     # Calculate loan amount (round to nearest 10,000)
     raw_amount = customer.income * income_multiplier
@@ -94,6 +113,16 @@ def generate_offer(
     if status == "NEEDS_REVIEW":
         reason_codes = [f.get("flag", "UNKNOWN") for f in fraud_flags if f.get("severity") in ("high", "medium")]
 
+    explainability = _build_offer_explainability(
+        status=status,
+        risk_band=risk_band,
+        risk_score=risk_score,
+        bureau_score=bureau_score,
+        propensity_score=propensity_score,
+        fraud_flags=fraud_flags,
+        reason_codes=reason_codes,
+    )
+
     return {
         "status": status,
         "loan_amount": loan_amount,
@@ -104,16 +133,33 @@ def generate_offer(
         "confidence_score": confidence_score,
         "reason_codes": reason_codes,
         "verification_summary": verification,
+        "explainability": explainability,
     }
 
 
-def _declined_offer(customer: CustomerData, fraud_flags: list[dict]) -> dict:
+def _declined_offer(
+    customer: CustomerData,
+    fraud_flags: list[dict],
+    risk_score: int,
+    bureau: dict,
+    propensity: dict,
+) -> dict:
     """Generate a declined offer response."""
     reasons = [f.get("flag", "UNKNOWN") for f in fraud_flags if f.get("severity") == "high"]
     if customer.income < 15000:
         reasons.append("INCOME_BELOW_MINIMUM")
     if not customer.consent:
         reasons.append("NO_CONSENT")
+
+    explainability = _build_offer_explainability(
+        status="DECLINED",
+        risk_band="HIGH" if reasons else "MEDIUM",
+        risk_score=risk_score,
+        bureau_score=float(bureau.get("bureau_score", 650)),
+        propensity_score=float(propensity.get("score", 0.4)),
+        fraud_flags=fraud_flags,
+        reason_codes=reasons,
+    )
 
     return {
         "status": "DECLINED",
@@ -125,6 +171,7 @@ def _declined_offer(customer: CustomerData, fraud_flags: list[dict]) -> dict:
         "confidence_score": 0,
         "reason_codes": reasons,
         "verification_summary": _build_verification_summary(customer, fraud_flags),
+        "explainability": explainability,
     }
 
 
@@ -179,4 +226,37 @@ def _build_verification_summary(customer: CustomerData, fraud_flags: list[dict])
         "consent_captured": consent_captured,
         "fraud_flags_count": len(fraud_flags),
         "no_fraud_flags": len(fraud_flags) == 0,
+    }
+
+
+def _build_offer_explainability(
+    status: str,
+    risk_band: str,
+    risk_score: int,
+    bureau_score: float,
+    propensity_score: float,
+    fraud_flags: list[dict],
+    reason_codes: list[str],
+) -> dict:
+    """Attach concise, judge-friendly "why this offer" reasoning."""
+    drivers = [
+        {"factor": "risk_band", "value": risk_band},
+        {"factor": "risk_score", "value": risk_score},
+        {"factor": "bureau_score", "value": bureau_score},
+        {"factor": "propensity_score", "value": round(propensity_score, 3)},
+    ]
+    severity_breakdown = {
+        "high": sum(1 for f in fraud_flags if f.get("severity") == "high"),
+        "medium": sum(1 for f in fraud_flags if f.get("severity") == "medium"),
+        "low": sum(1 for f in fraud_flags if f.get("severity") == "low"),
+    }
+    return {
+        "decision": status,
+        "drivers": drivers,
+        "reason_codes": reason_codes,
+        "severity_breakdown": severity_breakdown,
+        "explanation": (
+            f"Decision {status} based on {risk_band} risk, score {risk_score}, "
+            f"bureau {int(bureau_score)}, propensity {propensity_score:.2f}."
+        ),
     }

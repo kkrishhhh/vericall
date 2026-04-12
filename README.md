@@ -20,8 +20,9 @@ A customer opens a link → joins a live video call → an AI agent guides them 
 │                   BACKEND (FastAPI)                      │
 │  /api/agent         │ Groq LLM (Llama 3.3 70B)          │
 │  /api/analyze-face  │ DeepFace age estimation            │
-│  /api/assess-risk   │ Multi-signal fraud detection       │
-│  /api/generate-offer│ Policy engine + loan calculator    │
+│  /api/assess-risk   │ Risk + fake bureau + propensity    │
+│  /api/generate-offer│ Policy engine + explainable offer  │
+│  /api/log-session   │ Structured session audit (SQLite)  │
 │  /api/create-room   │ Daily.co room management           │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -37,6 +38,7 @@ A customer opens a link → joins a live video call → an AI agent guides them 
 | Age Detection | DeepFace (runs locally, no API key) |
 | Geolocation | Browser Geolocation API |
 | Backend | Python FastAPI + Pydantic |
+| Persistence | SQLite audit repository (+ JSONL fallback) |
 | Animations | Framer Motion |
 
 ## Quick Start
@@ -58,6 +60,7 @@ Create `.env` in the project root:
 DAILY_API_KEY=your_daily_co_api_key
 DEEPGRAM_API_KEY=your_deepgram_api_key
 GROQ_API_KEY=your_groq_api_key
+AUDIT_WRITE_JSONL_COPY=false
 ```
 
 Create `frontend/.env.local`:
@@ -104,9 +107,17 @@ Frontend runs at `http://localhost:3000`
 | `/api/agent` | POST | LLM conversation — accepts transcript, returns next question |
 | `/api/analyze-face` | POST | DeepFace age estimation from base64 image |
 | `/api/assess-risk` | POST | Multi-signal fraud detection |
-| `/api/generate-offer` | POST | Policy engine → personalized loan offer |
+| `/api/generate-offer` | POST | Policy engine → personalized loan offer with explainability |
 | `/api/create-room` | POST | Create Daily.co video call room |
 | `/api/deepgram-token` | GET | Deepgram API key for frontend STT |
+| `/api/log-session` | POST | Persist structured session audit payload |
+| `/api/audit/recent` | GET | Read recent sessions from SQLite audit log |
+| `/api/documents/latest` | GET | Generate auto-filled document pack from latest session |
+| `/api/documents/{session_id}` | GET | Generate auto-filled document pack for a session |
+| `/api/documents/latest/application/html` | GET | Render PDF-ready HTML application form from latest session |
+| `/api/documents/{session_id}/application/html` | GET | Render PDF-ready HTML application form by session |
+| `/api/documents/latest/application/pdf` | GET | Download application form as PDF from latest session |
+| `/api/documents/{session_id}/application/pdf` | GET | Download application form as PDF by session |
 
 ## Fraud Detection Signals
 
@@ -115,6 +126,13 @@ Frontend runs at `http://localhost:3000`
 - **Income inconsistency**: LLM detects logical conflicts
 - **Consent verification**: Explicit verbal consent required
 - **Age eligibility**: 21–55 years
+
+## Decision Intelligence
+
+- **Mock bureau adapter**: deterministic bureau score + tradeline summary (`mock_bureau_v1`)
+- **Propensity model**: transparent formula (`propensity_formula_v1`) with factor contributions
+- **Explainable output**: risk and offer responses include reason codes and decision trace
+- **Structured session schema**: campaign/lead IDs, model versions, decision trace, and audit metadata
 
 ## Team
 

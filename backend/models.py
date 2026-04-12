@@ -87,6 +87,7 @@ class RiskAssessmentRequest(BaseModel):
     customer: CustomerData
     face_analysis: Optional[FaceAnalysisResponse] = None
     location: Optional[dict] = None
+    bureau: Optional[dict] = None
 
 
 class RiskAssessmentResponse(BaseModel):
@@ -96,6 +97,9 @@ class RiskAssessmentResponse(BaseModel):
     eligible: bool = True
     reason: str = ""
     decision_reasons: list[str] = Field(default_factory=list, description="Human-readable risk narrative")
+    bureau: dict = Field(default_factory=dict, description="Bureau or alternate-credit snapshot")
+    propensity: dict = Field(default_factory=dict, description="Repayment/conversion propensity model output")
+    explainability: dict = Field(default_factory=dict, description="Decision trace and reason codes")
 
 
 # ── Loan Offer Models ────────────────────────────────────────
@@ -103,7 +107,10 @@ class RiskAssessmentResponse(BaseModel):
 class OfferRequest(BaseModel):
     customer: CustomerData
     risk_band: str = "MEDIUM"
+    risk_score: int = Field(50, ge=0, le=100)
     fraud_flags: list[FraudFlag] = Field(default_factory=list)
+    bureau: dict = Field(default_factory=dict)
+    propensity: dict = Field(default_factory=dict)
 
 
 class LoanOffer(BaseModel):
@@ -116,6 +123,7 @@ class LoanOffer(BaseModel):
     confidence_score: float = 0
     reason_codes: list[str] = Field(default_factory=list)
     verification_summary: dict = Field(default_factory=dict)
+    explainability: dict = Field(default_factory=dict)
 
 
 # ── Daily.co Room ─────────────────────────────────────────────
@@ -131,14 +139,22 @@ class RoomResponse(BaseModel):
 class SessionAuditPayload(BaseModel):
     """Payload from frontend when a call completes — stored as JSONL."""
 
+    schema_version: str = Field("2026-04", description="Versioned audit schema for downstream consumers")
     session_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    lead_id: Optional[str] = None
+    source_channel: str = Field("video_call", description="Acquisition/source channel")
     phone: Optional[str] = None
     room_url: Optional[str] = None
     transcript_text: str = Field("", description="Full or summarized transcript")
     messages: Optional[list[dict]] = Field(default=None, description="Optional structured chat log")
     extracted: dict = Field(default_factory=dict)
     risk: dict = Field(default_factory=dict)
+    bureau: dict = Field(default_factory=dict)
+    propensity: dict = Field(default_factory=dict)
     offer: dict = Field(default_factory=dict)
+    decision_trace: list[str] = Field(default_factory=list)
+    model_versions: dict = Field(default_factory=dict)
     client_started_at: Optional[str] = Field(None, description="ISO timestamp from client if available")
 
 

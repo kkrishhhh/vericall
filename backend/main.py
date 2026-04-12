@@ -4,6 +4,7 @@ import os
 import time
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -20,8 +21,11 @@ from agent import run_agent
 from vision import analyze_face
 from fraud import assess_risk
 from offer import generate_offer
-from session_log import append_session_record, read_recent_sessions
+from session_log import append_session_record, read_recent_sessions, read_session_by_id
 from extraction import extract_profile_from_text
+from services.document_builder import build_document_pack
+from services.document_templates import render_application_form_html
+from services.document_pdf import render_application_form_pdf
 
 # Load env from project root
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -61,6 +65,11 @@ async def agent_endpoint(req: AgentRequest):
             data=result.get("data"),
         )
     except Exception as e:
+        if "AGENT_RATE_LIMIT" in str(e):
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit reached for AI model. Please retry in a few moments.",
+            ) from e
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
 
@@ -96,6 +105,7 @@ async def risk_assessment_endpoint(req: RiskAssessmentRequest):
             customer=req.customer,
             face_analysis=req.face_analysis,
             location=req.location,
+            bureau=req.bureau,
         )
         return RiskAssessmentResponse(**result)
     except Exception as e:
@@ -111,7 +121,10 @@ async def offer_endpoint(req: OfferRequest):
         result = generate_offer(
             customer=req.customer,
             risk_band=req.risk_band,
+            risk_score=req.risk_score,
             fraud_flags=[f.model_dump() if hasattr(f, 'model_dump') else f for f in req.fraud_flags],
+            bureau=req.bureau,
+            propensity=req.propensity,
         )
         return LoanOffer(**result)
     except Exception as e:
@@ -183,7 +196,100 @@ async def audit_recent(limit: int = 20):
     return {"sessions": read_recent_sessions(lim)}
 
 
-# ── 8. Structured extraction (optional second pass) ──────────
+# ── 8. Auto-filled document generation ──────────────────────
+
+@app.get("/api/documents/latest")
+async def documents_latest():
+    """Build auto-filled document payloads from the latest session."""
+    sessions = read_recent_sessions(1)
+    if not sessions:
+        raise HTTPException(status_code=404, detail="No sessions found to generate documents")
+    return build_document_pack(sessions[0])
+
+
+@app.get("/api/documents/{session_id}")
+async def documents_by_session(session_id: str):
+    """Build auto-filled document payloads from a specific session_id."""
+    row = read_session_by_id(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return build_document_pack(row)
+
+
+def _application_doc_from_pack(pack: dict) -> dict:
+    for doc in pack.get("documents") or []:
+        if doc.get("document_type") == "loan_application_form":
+            return doc
+    raise HTTPException(status_code=500, detail="Loan application form not found in document pack")
+
+
+@app.get("/api/documents/latest/application/html", response_class=HTMLResponse)
+async def latest_application_form_html(download: bool = False):
+    """Render a print-friendly HTML loan application from latest session."""
+    sessions = read_recent_sessions(1)
+    if not sessions:
+        raise HTTPException(status_code=404, detail="No sessions found to generate documents")
+
+    pack = build_document_pack(sessions[0])
+    app_doc = _application_doc_from_pack(pack)
+    html = render_application_form_html(app_doc)
+
+    headers = {}
+    if download:
+        sid = sessions[0].get("session_id", "latest")
+        headers["Content-Disposition"] = f'attachment; filename="application-{sid}.html"'
+    return HTMLResponse(content=html, headers=headers)
+
+
+@app.get("/api/documents/{session_id}/application/html", response_class=HTMLResponse)
+async def session_application_form_html(session_id: str, download: bool = False):
+    """Render a print-friendly HTML loan application from a specific session."""
+    row = read_session_by_id(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    pack = build_document_pack(row)
+    app_doc = _application_doc_from_pack(pack)
+    html = render_application_form_html(app_doc)
+
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="application-{session_id}.html"'
+    return HTMLResponse(content=html, headers=headers)
+
+
+@app.get("/api/documents/latest/application/pdf")
+async def latest_application_form_pdf():
+    """Generate a downloadable PDF loan application from latest session."""
+    sessions = read_recent_sessions(1)
+    if not sessions:
+        raise HTTPException(status_code=404, detail="No sessions found to generate documents")
+
+    pack = build_document_pack(sessions[0])
+    app_doc = _application_doc_from_pack(pack)
+    pdf_bytes = render_application_form_pdf(app_doc)
+
+    sid = sessions[0].get("session_id", "latest")
+    headers = {"Content-Disposition": f'attachment; filename="application-{sid}.pdf"'}
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers=headers)
+
+
+@app.get("/api/documents/{session_id}/application/pdf")
+async def session_application_form_pdf(session_id: str):
+    """Generate a downloadable PDF loan application from a specific session."""
+    row = read_session_by_id(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    pack = build_document_pack(row)
+    app_doc = _application_doc_from_pack(pack)
+    pdf_bytes = render_application_form_pdf(app_doc)
+
+    headers = {"Content-Disposition": f'attachment; filename="application-{session_id}.pdf"'}
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers=headers)
+
+
+# ── 9. Structured extraction (optional second pass) ──────────
 
 @app.post("/api/extract", response_model=ExtractedProfile)
 async def extract_endpoint(req: ExtractRequest):

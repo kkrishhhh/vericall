@@ -19,6 +19,8 @@ function CallPageInner() {
   const searchParams = useSearchParams();
   const roomUrl = searchParams.get("room") || "";
   const phone = searchParams.get("phone") || "";
+  const campaignId = searchParams.get("campaign_id") || "";
+  const leadId = searchParams.get("lead_id") || "";
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -40,6 +42,7 @@ function CallPageInner() {
   const [processingStep, setProcessingStep] = useState("");
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number } | null>(null);
   const [manualInput, setManualInput] = useState("");
+  const [agentNotice, setAgentNotice] = useState("");
   const messagesRef = useRef<Message[]>([]);
   const sessionStartedAtRef = useRef<string>(new Date().toISOString());
   const sessionIdRef = useRef<string>(
@@ -49,6 +52,7 @@ function CallPageInner() {
   /** Must not put conversationHistory in sendToAgent deps — it would change every reply and re-run the STT effect (Deepgram reconnect + sendToAgent("") loop). */
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
   const initialGreetingRequestedRef = useRef(false);
+  const agentRateLimitedUntilRef = useRef<number>(0);
 
   const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
@@ -234,7 +238,10 @@ function CallPageInner() {
           body: JSON.stringify({
             customer: customerData,
             risk_band: riskResult.risk_band,
+            risk_score: Number(riskResult.risk_score || 50),
             fraud_flags: riskResult.fraud_flags,
+            bureau: riskResult.bureau || {},
+            propensity: riskResult.propensity || {},
           }),
         });
         const offer = await offerRes.json();
@@ -248,18 +255,38 @@ function CallPageInner() {
           .join("\n");
 
         try {
+          const decisionTrace = [
+            ...(Array.isArray(riskResult?.decision_reasons) ? riskResult.decision_reasons : []),
+            ...(Array.isArray(offer?.explainability?.reason_codes)
+              ? offer.explainability.reason_codes.map((x: string) => `Offer reason: ${x}`)
+              : []),
+          ];
+
           const logRes = await fetch(`${BACKEND}/api/log-session`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              schema_version: "2026-04",
               session_id: sessionIdRef.current,
+              campaign_id: campaignId || undefined,
+              lead_id: leadId || undefined,
+              source_channel: "video_call",
               phone: phone || undefined,
               room_url: roomUrl || undefined,
               transcript_text: transcriptText,
               messages: messagesRef.current,
               extracted: merged,
               risk: riskResult,
+              bureau: riskResult?.bureau || {},
+              propensity: riskResult?.propensity || {},
               offer,
+              decision_trace: decisionTrace,
+              model_versions: {
+                agent: "llama-3.3-70b-versatile",
+                extraction: "llama-3.3-70b-versatile",
+                propensity: "propensity_formula_v1",
+                bureau: "mock_bureau_v1",
+              },
               client_started_at: sessionStartedAtRef.current,
             }),
           });
@@ -291,19 +318,47 @@ function CallPageInner() {
         setPhase("error");
       }
     },
-    [BACKEND, locationData, phone, roomUrl],
+    [BACKEND, campaignId, leadId, locationData, phone, roomUrl],
   );
 
   // ── 4. Send transcript to agent (stable callback — uses ref for history) ──
   const sendToAgent = useCallback(async (text: string) => {
     try {
+      if (Date.now() < agentRateLimitedUntilRef.current) {
+        return;
+      }
+
       const history = conversationHistoryRef.current;
       const res = await fetch(`${BACKEND}/api/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript: text, conversation_history: history }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const detail = await res
+          .json()
+          .then((d) => String(d?.detail || ""))
+          .catch(() => "");
+
+        if (res.status === 429) {
+          agentRateLimitedUntilRef.current = Date.now() + 30000;
+          const notice = "AI service is temporarily rate-limited. Retrying shortly. You can continue speaking or use text.";
+          setAgentNotice(notice);
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "agent" && last.content === notice) return prev;
+            return [...prev, { role: "agent", content: notice, timestamp: getTimestamp() }];
+          });
+          return;
+        }
+
+        if (detail) {
+          setAgentNotice(detail);
+        }
+        return;
+      }
+
+      setAgentNotice("");
       const data = await res.json();
 
       const userTurn = text.trim();
@@ -435,6 +490,13 @@ function CallPageInner() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {phase === "conversation" && agentNotice && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/25 max-w-[280px]">
+              <span className="text-xs text-amber-300 font-medium leading-tight">
+                {agentNotice}
+              </span>
+            </div>
+          )}
           {phase === "conversation" && sttStatus === "failed" && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/25 max-w-[220px]">
               <span className="text-xs text-amber-300 font-medium leading-tight">
@@ -573,6 +635,14 @@ function CallPageInner() {
                 }
               />
               <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                <a
+                  href={`${BACKEND}/api/documents/${sessionIdRef.current}/application/pdf`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-center text-sm text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                >
+                  Download application PDF
+                </a>
                 <Link
                   href="/dashboard"
                   className="text-center text-sm text-indigo-300 hover:text-indigo-200 underline underline-offset-2"

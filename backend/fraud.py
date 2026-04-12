@@ -2,6 +2,8 @@
 
 from models import CustomerData, FaceAnalysisResponse, FraudFlag
 from services.risk_engine import build_decision_reasons, compute_risk_score
+from services.bureau import get_bureau_snapshot
+from services.propensity import compute_propensity
 from age_verification import fraud_flags_for_visual_age
 
 
@@ -9,6 +11,7 @@ def assess_risk(
     customer: CustomerData,
     face_analysis: FaceAnalysisResponse | None = None,
     location: dict | None = None,
+    bureau: dict | None = None,
 ) -> dict:
     """
     Assess fraud risk based on all available signals.
@@ -119,6 +122,26 @@ def assess_risk(
 
     risk_score = compute_risk_score(risk_band, flags, customer)
     decision_reasons = build_decision_reasons(risk_band, flags, eligible, reason)
+    bureau_snapshot = bureau or get_bureau_snapshot(customer)
+    propensity = compute_propensity(customer, risk_band, risk_score, bureau_snapshot)
+
+    reason_codes = [f.flag for f in flags]
+    explainability = {
+        "reason_codes": reason_codes,
+        "top_factors": [
+            {"factor": "risk_band", "value": risk_band},
+            {"factor": "risk_score", "value": risk_score},
+            {
+                "factor": "bureau_score",
+                "value": bureau_snapshot.get("bureau_score"),
+            },
+            {
+                "factor": "propensity_score",
+                "value": propensity.get("score"),
+            },
+        ],
+        "decision_trace": decision_reasons,
+    }
 
     return {
         "risk_band": risk_band,
@@ -127,4 +150,7 @@ def assess_risk(
         "eligible": eligible,
         "reason": reason,
         "decision_reasons": decision_reasons,
+        "bureau": bureau_snapshot,
+        "propensity": propensity,
+        "explainability": explainability,
     }

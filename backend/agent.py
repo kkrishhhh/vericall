@@ -47,12 +47,18 @@ def run_agent(transcript: str, conversation_history: list[dict]) -> dict:
     if transcript.strip():
         messages.append({"role": "user", "content": transcript})
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        temperature=0.7,
-        max_tokens=512,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=320,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "rate_limit_exceeded" in msg or "Rate limit reached" in msg:
+            raise RuntimeError(f"AGENT_RATE_LIMIT: {msg}") from e
+        raise
 
     reply = response.choices[0].message.content.strip()
 
