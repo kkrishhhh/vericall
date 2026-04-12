@@ -538,20 +538,28 @@ function CallPageInner() {
 
               {/* Manual input fallback */}
               {phase === "conversation" && (
-                <div className="mt-4 flex gap-2">
-                  <input
-                    type="text"
-                    value={manualInput}
-                    onChange={(e) => setManualInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
-                    placeholder="Type a message (or speak)..."
-                    className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
-                  />
-                  <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                  </button>
+                <div className="mt-4 space-y-2">
+                  
+                  {/* 👇 ADD THIS MESSAGE */}
+                  <p className="text-xs text-slate-400 text-center">
+                    VeriCall is AI and may make mistakes — if something looks incorrect, feel free to type it out.
+                  </p>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualInput}
+                      onChange={(e) => setManualInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
+                      placeholder="Type a message (or speak)..."
+                      className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
+                    />
+                    <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
