@@ -178,3 +178,13 @@ class ExtractedProfile(BaseModel):
     consent: bool = False
     extraction_confidence: float = Field(0.0, ge=0.0, le=1.0)
     notes: str = ""
+
+
+# ── OTP Verification Models ────────────────────────────────────
+
+class SendOTPRequest(BaseModel):
+    mobile_number: str = Field(..., description="Mobile number to send the OTP to")
+
+class VerifyOTPRequest(BaseModel):
+    mobile_number: str = Field(..., description="Mobile number the OTP was sent to")
+    otp: str = Field(..., description="The OTP entered by the user")

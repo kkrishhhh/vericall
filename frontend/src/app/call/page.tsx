@@ -49,6 +49,8 @@ function CallPageInner() {
     typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}`,
   );
   const sttCloseRef = useRef<(() => void) | null>(null);
+  const sttConnRef = useRef<import("@/lib/sttService").DeepgramSttConnection | null>(null);
+  const speakingIdRef = useRef(0);
   /** Must not put conversationHistory in sendToAgent deps — it would change every reply and re-run the STT effect (Deepgram reconnect + sendToAgent("") loop). */
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
   const initialGreetingRequestedRef = useRef(false);
@@ -189,6 +191,8 @@ function CallPageInner() {
               });
               if (faceRes.ok) {
                 faceResult = await faceRes.json();
+                console.log("FRAME SAMPLE:", frames[0]);
+                console.log("FACE RESULT:", faceResult);
                 const msg = String(faceResult.verification_message || "");
                 if (msg) setProcessingStep(msg.slice(0, 120) + (msg.length > 120 ? "…" : ""));
               }
@@ -376,10 +380,32 @@ function CallPageInner() {
 
       // Speak agent response using browser TTS
       if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const currentSpeakingId = ++speakingIdRef.current;
+        
+        sttConnRef.current?.setMuted(true);
+        
         const utterance = new SpeechSynthesisUtterance(data.message);
         utterance.rate = 1;
         utterance.pitch = 1;
         utterance.lang = "en-IN";
+
+        // Prevent GC of utterance before onend fires
+        (window as any)._utterances = (window as any)._utterances || [];
+        (window as any)._utterances.push(utterance);
+        
+        const cleanup = () => {
+          setTimeout(() => {
+            if (speakingIdRef.current === currentSpeakingId) {
+              sttConnRef.current?.setMuted(false);
+            }
+          }, 300);
+          (window as any)._utterances = (window as any)._utterances.filter((u: any) => u !== utterance);
+        };
+        
+        utterance.onend = cleanup;
+        utterance.onerror = cleanup;
+        
         window.speechSynthesis.speak(utterance);
       }
 
@@ -441,6 +467,7 @@ function CallPageInner() {
         });
 
         sttCloseRef.current = conn.close;
+        sttConnRef.current = conn;
 
         agentTimerRef.current = setInterval(() => {
           const accumulated = pendingTranscriptRef.current.trim();
@@ -459,6 +486,7 @@ function CallPageInner() {
       setSttStatus("idle");
       sttCloseRef.current?.();
       sttCloseRef.current = null;
+      sttConnRef.current = null;
       if (agentTimerRef.current) clearInterval(agentTimerRef.current);
     };
   }, [phase, mediaStream, BACKEND, sendToAgent]);
@@ -572,20 +600,28 @@ function CallPageInner() {
 
               {/* Manual input fallback */}
               {phase === "conversation" && (
-                <div className="mt-4 flex gap-2">
-                  <input
-                    type="text"
-                    value={manualInput}
-                    onChange={(e) => setManualInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
-                    placeholder="Type a message (or speak)..."
-                    className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
-                  />
-                  <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                  </button>
+                <div className="mt-4 space-y-2">
+                  
+                  {/* 👇 ADD THIS MESSAGE */}
+                  <p className="text-xs text-slate-400 text-center">
+                    VeriCall is AI and may make mistakes — if something looks incorrect, feel free to type it out.
+                  </p>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualInput}
+                      onChange={(e) => setManualInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
+                      placeholder="Type a message (or speak)..."
+                      className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
+                    />
+                    <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
