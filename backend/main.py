@@ -17,6 +17,7 @@ from models import (
     SessionAuditPayload, SessionAuditResponse,
     ExtractRequest, ExtractedProfile,
     SendOTPRequest, VerifyOTPRequest,
+    VerifyAddressRequest, VerifyAddressResponse,
 )
 from agent import run_agent
 from vision import analyze_face
@@ -24,6 +25,7 @@ from fraud import assess_risk
 from offer import generate_offer
 from session_log import append_session_record, read_recent_sessions, read_session_by_id
 from extraction import extract_profile_from_text
+from services.document_match import verify_address_match
 from services.document_builder import build_document_pack
 from services.document_templates import render_application_form_html
 from services.document_pdf import render_application_form_pdf
@@ -350,6 +352,21 @@ async def verify_otp(req: VerifyOTPRequest):
         return {"status": "success", "message": "KYC Verified Successfully"}
         
     raise HTTPException(status_code=400, detail="Invalid OTP")
+
+
+# ── 10. Document Address Matching ────────────────────────────
+
+@app.post("/api/verify-address", response_model=VerifyAddressResponse)
+async def verify_address_endpoint(req: VerifyAddressRequest):
+    """
+    Takes an Aadhaar image and an Address Proof image (base64).
+    Uses Groq Vision to extract both addresses and semantic-match them.
+    """
+    try:
+        result = verify_address_match(req.aadhaar_image, req.address_proof_image)
+        return VerifyAddressResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Address verification failed: {str(e)}")
 
 
 if __name__ == "__main__":

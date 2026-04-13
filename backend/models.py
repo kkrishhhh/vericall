@@ -192,3 +192,15 @@ class SendOTPRequest(BaseModel):
 class VerifyOTPRequest(BaseModel):
     mobile_number: str = Field(..., description="Mobile number the OTP was sent to")
     otp: str = Field(..., description="The OTP entered by the user")
+
+# ── Document Verification Models ───────────────────────────────
+
+class VerifyAddressRequest(BaseModel):
+    aadhaar_image: str = Field(..., description="Base64 encoded string of the Aadhaar Card image")
+    address_proof_image: str = Field(..., description="Base64 encoded string of the Address Proof image")
+
+class VerifyAddressResponse(BaseModel):
+    aadhaar_address: str = Field(None, description="The formatted Address extracted from Aadhaar Card")
+    proof_address: str = Field(None, description="The formatted Address extracted from the Address Proof")
+    matches: bool = Field(..., description="True if the addresses semantically match")
+    reason: str = Field(..., description="Reasoning for the match or mismatch from the AI OCR model")

@@ -50,6 +50,13 @@ function CallPageInner() {
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number } | null>(null);
   const [manualInput, setManualInput] = useState("");
   const [agentNotice, setAgentNotice] = useState("");
+  const [addressCheck, setAddressCheck] = useState<{
+    aadhaar_address?: string;
+    proof_address?: string;
+    matches: boolean;
+    reason: string;
+  } | null>(null);
+  const [addressCheckError, setAddressCheckError] = useState("");
   const messagesRef = useRef<Message[]>([]);
   const sessionStartedAtRef = useRef<string>(new Date().toISOString());
   const sessionIdRef = useRef<string>(
@@ -66,6 +73,17 @@ function CallPageInner() {
   const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
 
   const getTimestamp = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+  const fileToDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") resolve(reader.result);
+        else reject(new Error("Could not read file"));
+      };
+      reader.onerror = () => reject(new Error("Could not read file"));
+      reader.readAsDataURL(file);
+    });
 
   // ── 1. Initialize camera + mic ─────────────────────────────
   useEffect(() => {
@@ -522,6 +540,54 @@ function CallPageInner() {
     setManualInput("");
   };
 
+  const handleDocumentSubmit = async () => {
+    if (!aadhaarFile || !panFile || !addressFile) return;
+    setAddressCheck(null);
+    setAddressCheckError("");
+    setIsUploadingDocs(true);
+    try {
+      const [aadhaarImage, addressProofImage] = await Promise.all([
+        fileToDataUrl(aadhaarFile),
+        fileToDataUrl(addressFile),
+      ]);
+
+      const verifyRes = await fetch(`${BACKEND}/api/verify-address`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aadhaar_image: aadhaarImage,
+          address_proof_image: addressProofImage,
+        }),
+      });
+
+      if (!verifyRes.ok) {
+        const errorBody = await verifyRes
+          .json()
+          .then((x) => String(x?.detail || "Address verification failed"))
+          .catch(() => "Address verification failed");
+        throw new Error(errorBody);
+      }
+
+      const verifyData = (await verifyRes.json()) as {
+        aadhaar_address?: string;
+        proof_address?: string;
+        matches: boolean;
+        reason: string;
+      };
+      setAddressCheck(verifyData);
+
+      if (verifyData.matches) {
+        setPhase("offer");
+      } else {
+        setAddressCheckError("Address mismatch found. Please upload documents with matching addresses.");
+      }
+    } catch (err) {
+      setAddressCheckError(err instanceof Error ? err.message : "Unable to verify address right now.");
+    } finally {
+      setIsUploadingDocs(false);
+    }
+  };
+
   return (
     <main className="relative min-h-screen animated-gradient-bg overflow-hidden">
       <div className="orb orb-1" />
@@ -695,11 +761,7 @@ function CallPageInner() {
                   disabled={isUploadingDocs || !aadhaarFile || !panFile || !addressFile}
                   className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => {
-                    setIsUploadingDocs(true);
-                    setTimeout(() => {
-                      setIsUploadingDocs(false);
-                      setPhase("offer");
-                    }, 1500);
+                    void handleDocumentSubmit();
                   }}
                 >
                   {isUploadingDocs ? (
@@ -714,6 +776,25 @@ function CallPageInner() {
                     "Submit Documents"
                   )}
                 </button>
+                {addressCheck && (
+                  <div
+                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+                      addressCheck.matches
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+                        : "bg-amber-500/10 border-amber-500/30 text-amber-200"
+                    }`}
+                  >
+                    <p className="font-medium">
+                      {addressCheck.matches ? "Address verification passed" : "Address verification failed"}
+                    </p>
+                    <p className="mt-1 text-xs opacity-90">{addressCheck.reason}</p>
+                  </div>
+                )}
+                {addressCheckError && (
+                  <p className="mt-3 text-xs text-red-300">
+                    {addressCheckError}
+                  </p>
+                )}
               </div>
             </div>
           )}
