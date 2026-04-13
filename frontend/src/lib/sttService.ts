@@ -10,11 +10,18 @@
  * Do NOT put the API key in the query string from the browser — handshake often fails.
  * Use `Sec-WebSocket-Protocol`: `new WebSocket(url, ["token", apiKey])` (Deepgram docs).
  */
-export function buildDeepgramListenUrl(sampleRate: number): string {
+const DEEPGRAM_LANG_MAP: Record<string, string> = {
+  en: "en-IN",
+  hi: "hi",
+  mr: "mr",
+};
+
+export function buildDeepgramListenUrl(sampleRate: number, language: string = "en"): string {
   const rate = Math.round(sampleRate);
+  const dgLang = DEEPGRAM_LANG_MAP[language] || "en-IN";
   const q = new URLSearchParams({
     model: "nova-2",
-    language: "en-IN",
+    language: dgLang,
     encoding: "linear16",
     sample_rate: String(rate),
     channels: "1",
@@ -48,11 +55,12 @@ export function connectDeepgramStt(
   token: string,
   mediaStream: MediaStream,
   handlers: DeepgramSttHandlers,
+  language: string = "en",
 ): DeepgramSttConnection {
   // Create context first so WebSocket URL uses the actual hardware sample rate.
   const audioContext = new AudioContext();
   const sampleRate = audioContext.sampleRate;
-  const url = buildDeepgramListenUrl(sampleRate);
+  const url = buildDeepgramListenUrl(sampleRate, language);
   const ws = new WebSocket(url, ["token", token]);
   let processor: ScriptProcessorNode | null = null;
   let handshakeOk = false;

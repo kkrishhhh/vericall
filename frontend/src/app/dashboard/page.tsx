@@ -18,7 +18,7 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useState<AuditSession[]>([]);
   const [lastLocal, setLastLocal] = useState<AuditSession | null>(null);
   const [error, setError] = useState("");
-  const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+  const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
 
   useEffect(() => {
     try {

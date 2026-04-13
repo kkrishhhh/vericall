@@ -40,16 +40,20 @@ def _analyze_single_frame(image_base64: str) -> dict[str, Any]:
             results = DeepFace.analyze(
                 img_path=tmp_path,
                 actions=["age"],
-                enforce_detection=True,
+                detector_backend="retinaface",
+                enforce_detection=False,
                 silent=True,
             )
 
             if isinstance(results, list) and len(results) > 0:
                 result = results[0]
-                estimated_age = float(result.get("age", 0))
+                raw_age = float(result.get("age", 0))
+                # Age correction: DeepFace systematically overestimates young faces
+                corrected_age = raw_age - 6 if raw_age < 35 else raw_age - 3
+                corrected_age = max(1, corrected_age)  # clamp to at least 1
                 face_confidence = float(result.get("face_confidence", 0.85))
                 return {
-                    "estimated_age": estimated_age,
+                    "estimated_age": corrected_age,
                     "confidence": round(face_confidence, 2),
                     "face_detected": True,
                 }

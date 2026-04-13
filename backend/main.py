@@ -59,7 +59,7 @@ async def health():
 async def agent_endpoint(req: AgentRequest):
     """Process transcript through the Groq LLM agent."""
     try:
-        result = run_agent(req.transcript, req.conversation_history)
+        result = run_agent(req.transcript, req.conversation_history, req.language)
         return AgentResponse(
             message=result["message"],
             done=result["done"],
@@ -309,23 +309,28 @@ otp_store = {}
 @app.post("/api/send-otp")
 async def send_otp(req: SendOTPRequest):
     """Simulate sending an OTP to a mobile number."""
-    import random
-    import time
-    
-    otp = str(random.randint(100000, 999999))
-    otp_store[req.mobile_number] = {
-        "otp": otp,
-        "expires_at": time.time() + 300
-    }
-    
-    print()
-    print("=" * 50)
-    print(f"✅ [MOCK SMS] Sent to {req.mobile_number}:")
-    print(f"   Your Aadhaar/PAN Verification OTP is {otp}")
-    print("=" * 50)
-    print()
-    
-    return {"status": "success", "message": "OTP sent to mobile number"}
+    try:
+        import random
+        import time
+        
+        otp = str(random.randint(100000, 999999))
+        otp_store[req.mobile_number] = {
+            "otp": otp,
+            "expires_at": time.time() + 300
+        }
+        
+        print()
+        print("=" * 50)
+        print(f"[MOCK SMS SUCCESS] Sent to {req.mobile_number}:")
+        print(f"   Your Aadhaar/PAN Verification OTP is {otp}")
+        print("=" * 50)
+        print()
+        
+        return {"status": "success", "message": "OTP sent to mobile number"}
+    except Exception as e:
+        import traceback
+        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+
 
 @app.post("/api/verify-otp")
 async def verify_otp(req: VerifyOTPRequest):
@@ -349,4 +354,4 @@ async def verify_otp(req: VerifyOTPRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

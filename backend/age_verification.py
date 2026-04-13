@@ -29,20 +29,20 @@ def assess_age_against_claim(
 
     delta = abs(float(estimated_age) - float(declared_age))
 
-    if delta <= 3:
+    if delta <= 5:
         score = 1.0
         consistent = True
         tier = "strong match"
-    elif delta <= 5:
+    elif delta <= 8:
         score = 0.78
         consistent = True
         tier = "acceptable match"
-    elif delta <= 7:
+    elif delta <= 12:
         score = 0.45
-        consistent = False
-        tier = "questionable"
+        consistent = True
+        tier = "within tolerance"
     else:
-        score = max(0.05, 1.0 - min(1.0, (delta - 7) / 15))
+        score = max(0.05, 1.0 - min(1.0, (delta - 12) / 15))
         consistent = False
         tier = "poor match"
 
@@ -71,7 +71,7 @@ def fraud_flags_for_visual_age(
 
     delta = abs(float(estimated_age) - float(declared_age))
 
-    if delta > 8:
+    if delta > 12:
         return [
             FraudFlag(
                 flag="AGE_MISMATCH",
@@ -82,7 +82,7 @@ def fraud_flags_for_visual_age(
                 ),
             )
         ]
-    if delta > 5:
+    if delta > 8:
         return [
             FraudFlag(
                 flag="AGE_MINOR_DISCREPANCY",

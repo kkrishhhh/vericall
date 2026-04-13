@@ -12,6 +12,10 @@ class AgentRequest(BaseModel):
         default_factory=list,
         description="List of {role, content} message dicts for conversation context",
     )
+    language: str = Field(
+        "en",
+        description="Language code for agent responses: 'en', 'hi', or 'mr'",
+    )
 
 
 class AgentResponse(BaseModel):

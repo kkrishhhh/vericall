@@ -21,6 +21,9 @@ function CallPageInner() {
   const phone = searchParams.get("phone") || "";
   const campaignId = searchParams.get("campaign_id") || "";
   const leadId = searchParams.get("lead_id") || "";
+  const lang = searchParams.get("lang") || "en";
+
+  const TTS_LANG_MAP: Record<string, string> = { en: "en-IN", hi: "hi-IN", mr: "mr-IN" };
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -56,7 +59,7 @@ function CallPageInner() {
   const initialGreetingRequestedRef = useRef(false);
   const agentRateLimitedUntilRef = useRef<number>(0);
 
-  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
 
   const getTimestamp = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 
@@ -157,7 +160,7 @@ function CallPageInner() {
           }
         }
 
-        setProcessingStep("Capturing video for age verification…");
+        setProcessingStep("Please face the camera directly in good lighting.");
         let faceResult: Record<string, unknown> = {
           estimated_age: 0,
           confidence: 0,
@@ -167,6 +170,10 @@ function CallPageInner() {
         const declaredAge = Number(merged.age || 0);
 
         if (videoRef.current) {
+          // Wait 3 seconds for camera to stabilize and user to position face
+          await new Promise((r) => setTimeout(r, 3000));
+          setProcessingStep("Capturing video for age verification…");
+
           const video = videoRef.current;
           const canvas = document.createElement("canvas");
           canvas.width = video.videoWidth || 640;
@@ -177,7 +184,7 @@ function CallPageInner() {
             for (let i = 0; i < 3; i++) {
               ctx.drawImage(video, 0, 0);
               frames.push(canvas.toDataURL("image/jpeg", 0.85));
-              if (i < 2) await new Promise((r) => setTimeout(r, 280));
+              if (i < 2) await new Promise((r) => setTimeout(r, 500));
             }
             try {
               setProcessingStep("Estimating age from your face vs what you said…");
@@ -336,7 +343,7 @@ function CallPageInner() {
       const res = await fetch(`${BACKEND}/api/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text, conversation_history: history }),
+        body: JSON.stringify({ transcript: text, conversation_history: history, language: lang }),
       });
       if (!res.ok) {
         const detail = await res
@@ -388,7 +395,7 @@ function CallPageInner() {
         const utterance = new SpeechSynthesisUtterance(data.message);
         utterance.rate = 1;
         utterance.pitch = 1;
-        utterance.lang = "en-IN";
+        utterance.lang = TTS_LANG_MAP[lang] || "en-IN";
 
         // Prevent GC of utterance before onend fires
         (window as any)._utterances = (window as any)._utterances || [];
@@ -464,7 +471,7 @@ function CallPageInner() {
               void sendToAgent(accumulated);
             }
           },
-        });
+        }, lang);
 
         sttCloseRef.current = conn.close;
         sttConnRef.current = conn;
