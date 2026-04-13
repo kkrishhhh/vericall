@@ -6,6 +6,7 @@ import Link from "next/link";
 import TranscriptPanel from "@/components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
 import { connectDeepgramStt } from "@/lib/sttService";
+import { translations, Language } from "@/lib/translations";
 
 interface Message {
   role: "user" | "agent";
@@ -23,7 +24,8 @@ function CallPageInner() {
   const leadId = searchParams.get("lead_id") || "";
   const lang = searchParams.get("lang") || "en";
 
-  const TTS_LANG_MAP: Record<string, string> = { en: "en-IN", hi: "hi-IN", mr: "mr-IN" };
+  const t = translations[lang as Language] || translations.en;
+  const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -129,7 +131,7 @@ function CallPageInner() {
           .join("\n");
 
         if (userLines.trim().length > 12) {
-          setProcessingStep("Normalizing spoken details...");
+          setProcessingStep(t.profileExtracted);
           try {
             const exRes = await fetch(`${BACKEND}/api/extract`, {
               method: "POST",
@@ -160,7 +162,7 @@ function CallPageInner() {
           }
         }
 
-        setProcessingStep("Please face the camera directly in good lighting.");
+        setProcessingStep(t.verifyingAge);
         let faceResult: Record<string, unknown> = {
           estimated_age: 0,
           confidence: 0,
@@ -172,7 +174,7 @@ function CallPageInner() {
         if (videoRef.current) {
           // Wait 3 seconds for camera to stabilize and user to position face
           await new Promise((r) => setTimeout(r, 3000));
-          setProcessingStep("Capturing video for age verification…");
+          setProcessingStep(t.recordingFace);
 
           const video = videoRef.current;
           const canvas = document.createElement("canvas");
@@ -187,7 +189,7 @@ function CallPageInner() {
               if (i < 2) await new Promise((r) => setTimeout(r, 500));
             }
             try {
-              setProcessingStep("Estimating age from your face vs what you said…");
+              setProcessingStep(t.estimatingAge);
               const faceRes = await fetch(`${BACKEND}/api/analyze-face`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -209,7 +211,7 @@ function CallPageInner() {
           }
         }
 
-        setProcessingStep("Running fraud & risk checks...");
+        setProcessingStep(t.analyzingDetails);
         const purpose =
           String(merged.purpose || merged.loan_purpose || "").trim() ||
           String(customerInput.purpose || customerInput.loan_purpose || "");
@@ -242,7 +244,7 @@ function CallPageInner() {
         });
         const riskResult = await riskRes.json();
 
-        setProcessingStep("Generating your personalized offer...");
+        setProcessingStep(t.preparingOffer);
         const offerRes = await fetch(`${BACKEND}/api/generate-offer`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -545,7 +547,7 @@ function CallPageInner() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
-              <span className="text-xs text-emerald-400 font-medium">Listening</span>
+              <span className="text-xs text-emerald-400 font-medium">{t.listening}</span>
             </div>
           )}
           {phase === "conversation" && sttStatus === "connecting" && (
@@ -574,8 +576,8 @@ function CallPageInner() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-white mb-2">Connecting your camera...</h2>
-              <p className="text-sm text-slate-400">Please allow camera and microphone access</p>
+              <h2 className="text-xl font-semibold text-white mb-2">{t.initializingCall}</h2>
+              <p className="text-sm text-slate-400">{t.pleaseWait}</p>
             </div>
           )}
 
