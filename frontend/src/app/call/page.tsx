@@ -13,7 +13,7 @@ interface Message {
   timestamp?: string;
 }
 
-type CallPhase = "connecting" | "conversation" | "analyzing" | "offer" | "error";
+type CallPhase = "connecting" | "conversation" | "analyzing" | "upload-docs" | "offer" | "error";
 
 function CallPageInner() {
   const searchParams = useSearchParams();
@@ -43,6 +43,10 @@ function CallPageInner() {
   const [riskSnapshot, setRiskSnapshot] = useState<Record<string, unknown> | null>(null);
   const [customerSnapshot, setCustomerSnapshot] = useState<Record<string, unknown> | null>(null);
   const [processingStep, setProcessingStep] = useState("");
+  const [isUploadingDocs, setIsUploadingDocs] = useState(false);
+  const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
+  const [panFile, setPanFile] = useState<File | null>(null);
+  const [addressFile, setAddressFile] = useState<File | null>(null);
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number } | null>(null);
   const [manualInput, setManualInput] = useState("");
   const [agentNotice, setAgentNotice] = useState("");
@@ -336,7 +340,7 @@ function CallPageInner() {
           /* ignore */
         }
 
-        setPhase("offer");
+        setPhase("upload-docs");
       } catch {
         setPhase("error");
       }
@@ -643,6 +647,74 @@ function CallPageInner() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {phase === "upload-docs" && (
+            <div className="w-full max-w-md mx-auto space-y-4">
+              <div className="glass-card p-8">
+                <h2 className="text-xl font-semibold text-white mb-2 text-center">
+                  Upload Documents
+                </h2>
+                <p className="text-sm text-slate-400 mb-6 text-center">
+                  Please upload clear images of your Aadhaar, PAN card, and an Address Proof to complete the KYC process.
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">Aadhaar Card (Front & Back)</label>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      multiple
+                      onChange={(e) => setAadhaarFile(e.target.files?.[0] || null)}
+                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">PAN Card</label>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      onChange={(e) => setPanFile(e.target.files?.[0] || null)}
+                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">Address Proof</label>
+                    <p className="text-xs text-slate-400 mb-2 mt-[-4px]">E.g. Driver's License, Passport, or Utility Bill</p>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      multiple
+                      onChange={(e) => setAddressFile(e.target.files?.[0] || null)}
+                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                    />
+                  </div>
+                </div>
+                <button
+                  disabled={isUploadingDocs || !aadhaarFile || !panFile || !addressFile}
+                  className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    setIsUploadingDocs(true);
+                    setTimeout(() => {
+                      setIsUploadingDocs(false);
+                      setPhase("offer");
+                    }, 1500);
+                  }}
+                >
+                  {isUploadingDocs ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Uploading...
+                    </>
+                  ) : (
+                    "Submit Documents"
+                  )}
+                </button>
+              </div>
             </div>
           )}
 
