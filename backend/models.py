@@ -197,6 +197,7 @@ class VerifyOTPRequest(BaseModel):
 
 class VerifyAddressRequest(BaseModel):
     aadhaar_image: str = Field(..., description="Base64 encoded string of the Aadhaar Card image")
+    pan_image: str = Field(..., description="Base64 encoded string of the PAN card image")
     address_proof_image: str = Field(..., description="Base64 encoded string of the Address Proof image")
 
 class VerifyAddressResponse(BaseModel):
@@ -204,3 +205,10 @@ class VerifyAddressResponse(BaseModel):
     proof_address: str = Field(None, description="The formatted Address extracted from the Address Proof")
     matches: bool = Field(..., description="True if the addresses semantically match")
     reason: str = Field(..., description="Reasoning for the match or mismatch from the AI OCR model")
+    name_match: bool = Field(False, description="True if name is consistent across documents")
+    dob_match: bool = Field(False, description="True if DOB is consistent across documents")
+    gender_match: bool = Field(False, description="True if gender is consistent across documents")
+    aadhaar_number_valid: bool = Field(False, description="True if Aadhaar number passes format/checksum")
+    pan_number_valid: bool = Field(False, description="True if PAN number passes format checks")
+    blood_group: Optional[str] = Field(None, description="Blood group if present in any document")
+    extracted: dict = Field(default_factory=dict, description="Raw extracted fields by document")

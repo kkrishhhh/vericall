@@ -55,6 +55,12 @@ function CallPageInner() {
     proof_address?: string;
     matches: boolean;
     reason: string;
+    name_match?: boolean;
+    dob_match?: boolean;
+    gender_match?: boolean;
+    aadhaar_number_valid?: boolean;
+    pan_number_valid?: boolean;
+    blood_group?: string | null;
   } | null>(null);
   const [addressCheckError, setAddressCheckError] = useState("");
   const messagesRef = useRef<Message[]>([]);
@@ -546,8 +552,9 @@ function CallPageInner() {
     setAddressCheckError("");
     setIsUploadingDocs(true);
     try {
-      const [aadhaarImage, addressProofImage] = await Promise.all([
+      const [aadhaarImage, panImage, addressProofImage] = await Promise.all([
         fileToDataUrl(aadhaarFile),
+        fileToDataUrl(panFile),
         fileToDataUrl(addressFile),
       ]);
 
@@ -556,6 +563,7 @@ function CallPageInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           aadhaar_image: aadhaarImage,
+          pan_image: panImage,
           address_proof_image: addressProofImage,
         }),
       });
@@ -573,6 +581,12 @@ function CallPageInner() {
         proof_address?: string;
         matches: boolean;
         reason: string;
+        name_match?: boolean;
+        dob_match?: boolean;
+        gender_match?: boolean;
+        aadhaar_number_valid?: boolean;
+        pan_number_valid?: boolean;
+        blood_group?: string | null;
       };
       setAddressCheck(verifyData);
 
@@ -788,6 +802,15 @@ function CallPageInner() {
                       {addressCheck.matches ? "Address verification passed" : "Address verification failed"}
                     </p>
                     <p className="mt-1 text-xs opacity-90">{addressCheck.reason}</p>
+                    <p className="mt-1 text-xs opacity-90">
+                      Name: {addressCheck.name_match ? "match" : "mismatch"} · DOB: {addressCheck.dob_match ? "match" : "mismatch"} · Gender: {addressCheck.gender_match ? "match" : "mismatch"}
+                    </p>
+                    <p className="mt-1 text-xs opacity-90">
+                      Aadhaar: {addressCheck.aadhaar_number_valid ? "valid" : "invalid"} · PAN: {addressCheck.pan_number_valid ? "valid" : "invalid"}
+                    </p>
+                    {addressCheck.blood_group && (
+                      <p className="mt-1 text-xs opacity-90">Blood Group: {addressCheck.blood_group}</p>
+                    )}
                   </div>
                 )}
                 {addressCheckError && (
