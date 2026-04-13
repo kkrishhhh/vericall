@@ -128,36 +128,22 @@ function CallPageInner() {
           .map((m) => m.content)
           .join("\n");
 
+        let extractionPromise: Promise<Record<string, unknown> | null> | null = null;
         if (userLines.trim().length > 12) {
-          setProcessingStep("Normalizing spoken details...");
-          try {
-            const exRes = await fetch(`${BACKEND}/api/extract`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ conversation_text: userLines }),
-            });
-            if (exRes.ok) {
-              const ex = (await exRes.json()) as Record<string, unknown>;
-              const pick = (a: unknown, b: unknown) =>
-                a !== undefined && a !== null && a !== "" && !(typeof a === "number" && a === 0) ? a : b;
-              merged = {
-                ...merged,
-                name: pick(merged.name, ex.name) ?? "",
-                age: Number(pick(merged.age, ex.age)) || 0,
-                income: Number(pick(merged.income, ex.income)) || 0,
-                employment: String(pick(merged.employment, ex.employment) ?? ""),
-                purpose: String(
-                  pick(merged.purpose, pick(merged.loan_purpose, ex.loan_purpose)) ?? "",
-                ),
-                loan_purpose: String(
-                  pick(merged.loan_purpose, pick(merged.purpose, ex.loan_purpose)) ?? "",
-                ),
-                consent: Boolean(merged.consent) || Boolean(ex.consent),
-              };
+          extractionPromise = (async () => {
+            setProcessingStep("Normalizing spoken details...");
+            try {
+              const exRes = await fetch(`${BACKEND}/api/extract`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversation_text: userLines }),
+              });
+              if (!exRes.ok) return null;
+              return (await exRes.json()) as Record<string, unknown>;
+            } catch {
+              return null;
             }
-          } catch {
-            /* extraction optional */
-          }
+          })();
         }
 
         setProcessingStep("Please face the camera directly in good lighting.");
@@ -167,11 +153,10 @@ function CallPageInner() {
           face_detected: false,
         };
 
-        const declaredAge = Number(merged.age || 0);
+        // Use current known age first; merge extraction later without blocking face capture.
+        const initialDeclaredAge = Number(merged.age || customerInput.age || 0);
 
         if (videoRef.current) {
-          // Wait 3 seconds for camera to stabilize and user to position face
-          await new Promise((r) => setTimeout(r, 3000));
           setProcessingStep("Capturing video for age verification…");
 
           const video = videoRef.current;
@@ -181,25 +166,28 @@ function CallPageInner() {
           const ctx = canvas.getContext("2d");
           if (ctx) {
             const frames: string[] = [];
-            for (let i = 0; i < 3; i++) {
+            for (let i = 0; i < 2; i++) {
               ctx.drawImage(video, 0, 0);
-              frames.push(canvas.toDataURL("image/jpeg", 0.85));
-              if (i < 2) await new Promise((r) => setTimeout(r, 500));
+              frames.push(canvas.toDataURL("image/jpeg", 0.75));
+              if (i < 1) await new Promise((r) => setTimeout(r, 140));
             }
             try {
               setProcessingStep("Estimating age from your face vs what you said…");
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 8000);
+
               const faceRes = await fetch(`${BACKEND}/api/analyze-face`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   images: frames,
-                  ...(declaredAge > 0 ? { declared_age: declaredAge } : {}),
+                  ...(initialDeclaredAge > 0 ? { declared_age: initialDeclaredAge } : {}),
                 }),
+                signal: controller.signal,
               });
+              clearTimeout(timeoutId);
               if (faceRes.ok) {
                 faceResult = await faceRes.json();
-                console.log("FRAME SAMPLE:", frames[0]);
-                console.log("FACE RESULT:", faceResult);
                 const msg = String(faceResult.verification_message || "");
                 if (msg) setProcessingStep(msg.slice(0, 120) + (msg.length > 120 ? "…" : ""));
               }
@@ -208,6 +196,30 @@ function CallPageInner() {
             }
           }
         }
+
+        if (extractionPromise) {
+          const ex = await extractionPromise;
+          if (ex) {
+            const pick = (a: unknown, b: unknown) =>
+              a !== undefined && a !== null && a !== "" && !(typeof a === "number" && a === 0) ? a : b;
+            merged = {
+              ...merged,
+              name: pick(merged.name, ex.name) ?? "",
+              age: Number(pick(merged.age, ex.age)) || 0,
+              income: Number(pick(merged.income, ex.income)) || 0,
+              employment: String(pick(merged.employment, ex.employment) ?? ""),
+              purpose: String(
+                pick(merged.purpose, pick(merged.loan_purpose, ex.loan_purpose)) ?? "",
+              ),
+              loan_purpose: String(
+                pick(merged.loan_purpose, pick(merged.purpose, ex.loan_purpose)) ?? "",
+              ),
+              consent: Boolean(merged.consent) || Boolean(ex.consent),
+            };
+          }
+        }
+
+        const declaredAge = Number(merged.age || 0);
 
         setProcessingStep("Running fraud & risk checks...");
         const purpose =

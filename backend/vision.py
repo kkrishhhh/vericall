@@ -8,6 +8,11 @@ from typing import Any
 
 from age_verification import assess_age_against_claim
 
+try:
+    from deepface import DeepFace as _DeepFace
+except Exception:
+    _DeepFace = None
+
 
 def _empty_result() -> dict[str, Any]:
     return {
@@ -25,7 +30,8 @@ def _empty_result() -> dict[str, Any]:
 def _analyze_single_frame(image_base64: str) -> dict[str, Any]:
     """Run DeepFace on one base64 JPEG; returns per-frame result."""
     try:
-        from deepface import DeepFace
+        if _DeepFace is None:
+            return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False}
 
         if "," in image_base64:
             image_base64 = image_base64.split(",", 1)[1]
@@ -37,10 +43,10 @@ def _analyze_single_frame(image_base64: str) -> dict[str, Any]:
             tmp_path = tmp.name
 
         try:
-            results = DeepFace.analyze(
+            results = _DeepFace.analyze(
                 img_path=tmp_path,
                 actions=["age"],
-                detector_backend="retinaface",
+                detector_backend="opencv",
                 enforce_detection=False,
                 silent=True,
             )
