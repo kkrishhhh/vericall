@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 from io import BytesIO
 
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 
@@ -20,6 +22,23 @@ def _text(value: object) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _draw_aadhaar_photo(pdf: canvas.Canvas, photo_data_url: str | None, page_width: float, page_height: float) -> None:
+    if not photo_data_url:
+        return
+    try:
+        payload = photo_data_url.split(",", 1)[1] if "," in photo_data_url else photo_data_url
+        raw = base64.b64decode(payload)
+        img = ImageReader(BytesIO(raw))
+        photo_w = 96
+        photo_h = 118
+        x = page_width - 40 - photo_w
+        y = page_height - 50 - photo_h + 8
+        pdf.drawImage(img, x, y, width=photo_w, height=photo_h, preserveAspectRatio=True, mask="auto")
+        pdf.rect(x, y, photo_w, photo_h)
+    except Exception:
+        return
 
 
 def render_application_form_pdf(doc: dict) -> bytes:
@@ -57,6 +76,7 @@ def render_application_form_pdf(doc: dict) -> bytes:
         y -= 14
 
     title("Poonawalla Fincorp - Loan Application Form")
+    _draw_aadhaar_photo(pdf, _text(fields.get("aadhaar_photo_base64")), width, height)
     row("Session ID", fields.get("session_id"))
     row("Application Time", fields.get("application_timestamp"))
 

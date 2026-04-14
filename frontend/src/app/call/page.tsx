@@ -583,6 +583,45 @@ function CallPageInner() {
         if (!decisionRes.ok) throw new Error("Decision engine failed");
         const decision = (await decisionRes.json()) as FinalDecision;
         setFinalDecision(decision);
+
+        const transcriptText = messagesRef.current.map((m) => `[${m.role}] ${m.content}`).join("\n");
+        try {
+          await fetch(`${BACKEND}/api/log-session`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              schema_version: "2026-04",
+              session_id: sessionIdRef.current,
+              campaign_id: campaignId || undefined,
+              lead_id: leadId || undefined,
+              source_channel: "video_call",
+              phone: phone || undefined,
+              room_url: roomUrl || undefined,
+              transcript_text: transcriptText,
+              messages: messagesRef.current,
+              extracted: {
+                ...preapproval,
+                aadhaar_photo_base64: verifyData.aadhaar_photo_base64 || null,
+                blood_group: verifyData.blood_group || null,
+              },
+              risk: {
+                kyc_status: kycResult.kyc_status,
+                risk_flag: kycResult.risk_flag,
+                document_verification: verifyData,
+              },
+              offer: {
+                status: decision.decision_status,
+                loan_amount: decision.final_approved_amount,
+                interest_rate: decision.interest_rate,
+                tenure_options: decision.tenure_options,
+              },
+              decision_trace: [decision.reason, verifyData.reason],
+              client_started_at: sessionStartedAtRef.current,
+            }),
+          });
+        } catch {
+          /* best effort */
+        }
         setJourneyStep("final");
         setPhase("offer");
       } else {

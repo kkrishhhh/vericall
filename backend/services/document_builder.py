@@ -35,6 +35,7 @@ def build_document_pack(session: dict) -> dict:
     employment = str(_pick(extracted, "employment", default=""))
     purpose = str(_pick(extracted, "purpose", "loan_purpose", default=""))
     consent = bool(_pick(extracted, "consent", default=False))
+    aadhaar_photo_base64 = _pick(extracted, "aadhaar_photo_base64", default=None)
 
     customer_fields = {
         "applicant_name": name,
@@ -46,6 +47,7 @@ def build_document_pack(session: dict) -> dict:
         "verbal_consent_captured": consent,
         "session_id": session.get("session_id") or "",
         "application_timestamp": _iso_to_local(session.get("logged_at")),
+        "aadhaar_photo_base64": aadhaar_photo_base64,
     }
 
     decision_fields = {

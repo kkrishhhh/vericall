@@ -44,6 +44,7 @@ def render_application_form_html(doc: dict) -> str:
     emi = _money(fields.get("monthly_emi"))
 
     session_id = _text(fields.get("session_id"))
+    aadhaar_photo_base64 = _text(fields.get("aadhaar_photo_base64"))
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -62,9 +63,20 @@ def render_application_form_html(doc: dict) -> str:
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif; color: var(--ink); background: #eef2f7; }}
     .page {{ width: 210mm; min-height: 297mm; margin: 10mm auto; background: white; border: 1px solid var(--line); }}
-    .header {{ padding: 16mm 14mm 8mm; border-bottom: 2px solid var(--brand); }}
+    .header {{ position: relative; padding: 16mm 14mm 8mm; border-bottom: 2px solid var(--brand); }}
     .title {{ margin: 0; font-size: 24px; letter-spacing: 0.2px; }}
     .subtitle {{ margin-top: 6px; color: var(--muted); font-size: 13px; }}
+    .photo {{
+      position: absolute;
+      top: 12mm;
+      right: 14mm;
+      width: 34mm;
+      height: 42mm;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      object-fit: cover;
+      background: #f1f5f9;
+    }}
     .section {{ padding: 10mm 14mm 0; }}
     .section h2 {{ margin: 0 0 8px; font-size: 15px; color: var(--brand); border-bottom: 1px solid var(--line); padding-bottom: 5px; }}
     .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }}
@@ -86,6 +98,7 @@ def render_application_form_html(doc: dict) -> str:
     <header class=\"header\">
       <h1 class=\"title\">Poonawalla Fincorp - Loan Application Form</h1>
       <p class=\"subtitle\">Auto-filled from AI onboarding session | Session ID: {session_id}</p>
+      {f'<img class="photo" src="{aadhaar_photo_base64}" alt="Applicant photo" />' if aadhaar_photo_base64 else ''}
     </header>
 
     <section class=\"section\">
