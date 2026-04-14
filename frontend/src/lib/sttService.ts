@@ -41,6 +41,8 @@ export interface DeepgramSttHandlers {
   onListeningChange?: (listening: boolean) => void;
   /** WebSocket / network failure — show typing fallback in UI */
   onError?: () => void;
+  /** WebSocket closed (clean or not) */
+  onClose?: () => void;
 }
 
 export interface DeepgramSttConnection {
@@ -170,6 +172,7 @@ export function connectDeepgramStt(
     if (!handshakeOk) {
       handlers.onError?.();
     }
+    handlers.onClose?.();
   };
 
   return { close, setMuted: (m: boolean) => { isMuted = m; } };

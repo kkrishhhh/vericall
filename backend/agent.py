@@ -26,12 +26,18 @@ Your job is to collect the following information from the customer in a friendly
 4. Loan type (personal/business/loan against property/other)
 5. Requested loan amount (INR)
 6. Declared age (optional; collect if naturally provided)
+7. Explicit verbal consent for video recording (MANDATORY — must be the LAST question before completing)
 
 Rules:
 - Ask one question at a time. Be warm and professional.
 - Use only these values for employment_type: salaried, self-employed, professional.
-- When ALL required fields are clearly collected, your ENTIRE reply must be ONLY valid JSON (no prose, no markdown) in this exact shape:
-{{"done": true, "name": "", "employment_type": "", "monthly_income": 0, "loan_type": "", "requested_loan_amount": 0, "declared_age": 0, "interview_notes": ""}}
+- IMPORTANT: After collecting all data fields (1-6), you MUST ask this EXACT final consent question before outputting the JSON:
+  "Do you provide your explicit consent for this video session to be recorded and used for loan origination purposes as required by RBI regulations? Please say Yes or No."
+- When the customer responds to the consent question, you MUST IMMEDIATELY output the final JSON. Do NOT ask again, do NOT try to convince them.
+- Set "consent" to true ONLY if the customer clearly says Yes/Haan/Ho. If they say No/Nahi/Nako or are unclear, set consent to false.
+- Whether consent is true or false, ALWAYS output the final JSON immediately after their response. The system will handle blocking if consent is false.
+- When ALL required fields are collected AND the consent question has been answered (yes OR no), your ENTIRE reply must be ONLY valid JSON (no prose, no markdown) in this exact shape:
+{{"done": true, "name": "", "employment_type": "", "monthly_income": 0, "loan_type": "", "requested_loan_amount": 0, "declared_age": 0, "consent": true, "interview_notes": ""}}
 - Use numbers for monthly_income and requested_loan_amount.
 - Keep declared_age as 0 if unknown.
 - Never reveal that you are AI-powered or mention specific APIs.
@@ -85,8 +91,11 @@ def run_agent(transcript: str, conversation_history: list[dict], language: str =
         if isinstance(parsed, dict) and parsed.get("done") is True:
             done = True
             data = parsed
-            # Create a friendly closing message
-            reply = f"Thank you, {parsed.get('name', 'Customer')}! I have all the information I need. Let me process your application now."
+            # Create a friendly closing message based on consent
+            if parsed.get("consent") is False:
+                reply = f"Thank you, {parsed.get('name', 'Customer')}. Since consent was not provided, we will not be able to proceed with the application as per RBI guidelines."
+            else:
+                reply = f"Thank you, {parsed.get('name', 'Customer')}! I have all the information I need. Let me process your application now."
     except json.JSONDecodeError:
         # Check if JSON is embedded within the response
         if '{"done": true' in reply or '{"done":true' in reply:
@@ -98,7 +107,10 @@ def run_agent(transcript: str, conversation_history: list[dict], language: str =
                 if parsed.get("done") is True:
                     done = True
                     data = parsed
-                    reply = f"Thank you, {parsed.get('name', 'Customer')}! I have all the information I need. Let me process your application now."
+                    if parsed.get("consent") is False:
+                        reply = f"Thank you, {parsed.get('name', 'Customer')}. Since consent was not provided, we will not be able to proceed with the application as per RBI guidelines."
+                    else:
+                        reply = f"Thank you, {parsed.get('name', 'Customer')}! I have all the information I need. Let me process your application now."
             except (ValueError, json.JSONDecodeError):
                 pass
 

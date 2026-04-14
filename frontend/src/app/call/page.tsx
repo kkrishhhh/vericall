@@ -96,6 +96,8 @@ function CallPageInner() {
   const [uploadedDocs, setUploadedDocs] = useState<Record<string, boolean>>({});
   const [documentStatus, setDocumentStatus] = useState<"PENDING" | "VERIFIED">("PENDING");
   const [finalDecision, setFinalDecision] = useState<FinalDecision | null>(null);
+  const [sessionDropped, setSessionDropped] = useState(false);
+  const sessionDropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const sessionStartedAtRef = useRef<string>(new Date().toISOString());
   const sessionIdRef = useRef<string>(
@@ -168,6 +170,24 @@ function CallPageInner() {
     messagesRef.current = messages;
   }, [messages]);
 
+  // ── Change 4: Monitor video track for session drop ──
+  useEffect(() => {
+    if (!mediaStream) return;
+    const videoTrack = mediaStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    const onEnded = () => {
+      if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+      sessionDropTimerRef.current = setTimeout(() => {
+        setSessionDropped(true);
+      }, 5000);
+    };
+    videoTrack.addEventListener("ended", onEnded);
+    return () => {
+      videoTrack.removeEventListener("ended", onEnded);
+      if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+    };
+  }, [mediaStream]);
+
   // ── 3. Post-conversation pipeline (declared before STT / agent) ──
   const handleConversationComplete = useCallback(
     async (customerInput: Record<string, unknown>) => {
@@ -195,6 +215,15 @@ function CallPageInner() {
         const pre = (await preRes.json()) as PreapprovalData;
         setPreapproval(pre);
         setCustomerSnapshot({ interview: interviewPayload });
+
+        // Change 3: Block if consent is false
+        const consentGiven = Boolean(customerInput.consent);
+        if (!consentGiven) {
+          setJourneyError("KYC cannot proceed without consent as required by RBI guidelines.");
+          setPhase("error");
+          return;
+        }
+
         setJourneyStep("kyc");
         setPhase("kyc");
       } catch {
@@ -462,6 +491,13 @@ function CallPageInner() {
             }
           },
           onError: () => setSttStatus("failed"),
+          onClose: () => {
+            // Change 4: Start 5-second drop timer on STT disconnect
+            if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+            sessionDropTimerRef.current = setTimeout(() => {
+              setSessionDropped(true);
+            }, 5000);
+          },
           onListeningChange: (v) => setIsListening(v),
           onFinalTranscript: (transcript) => {
             if (!transcript.trim()) return;
@@ -515,9 +551,28 @@ function CallPageInner() {
   };
 
   return (
-    <main className="relative min-h-screen animated-gradient-bg overflow-hidden">
+    <main className="relative min-h-screen animated-gradient-bg overflow-hidden flex flex-col">
       <div className="orb orb-1" />
       <div className="orb orb-2" />
+
+      {/* Change 4: Session Drop Overlay */}
+      {sessionDropped && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="glass-card p-8 max-w-md text-center space-y-4">
+            <div className="w-16 h-16 mx-auto rounded-full bg-red-500/10 flex items-center justify-center">
+              <span className="text-3xl">⚠️</span>
+            </div>
+            <h2 className="text-xl font-semibold text-white">Session Interrupted</h2>
+            <p className="text-sm text-slate-400">Your video or voice connection was lost for more than 5 seconds. Please restart your KYC session.</p>
+            <button
+              onClick={() => window.location.href = "/"}
+              className="btn-primary w-full"
+            >
+              Restart Session
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Top Bar */}
       <header className="relative z-10 flex items-center justify-between px-6 py-4 glass border-b border-white/[0.06]">
@@ -933,6 +988,13 @@ function CallPageInner() {
           )}
         </div>
       </div>
+
+      {/* Change 2: RBI Compliance Disclaimer Footer */}
+      <footer className="relative z-10 py-2 px-4 text-center bg-black/40 border-t border-white/[0.06]">
+        <p className="text-[10px] text-slate-500 leading-tight">
+          This V-CIP session is recorded in compliance with RBI Master KYC Direction 2016. Data encrypted and stored securely per RBI guidelines.
+        </p>
+      </footer>
     </main>
   );
 }
