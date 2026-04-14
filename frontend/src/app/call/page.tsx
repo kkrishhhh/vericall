@@ -16,7 +16,7 @@ interface Message {
   timestamp?: string;
 }
 
-type CallPhase = "connecting" | "conversation" | "analyzing" | "kyc" | "documents" | "upload-docs" | "offer" | "error";
+type CallPhase = "connecting" | "conversation" | "analyzing" | "kyc" | "upload-docs" | "offer" | "error";
 
 interface PreapprovalData {
   name: string;
@@ -89,19 +89,17 @@ function CallPageInner() {
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number } | null>(null);
   const [manualInput, setManualInput] = useState("");
   const [agentNotice, setAgentNotice] = useState("");
-  const [, setJourneyStep] = useState<"interview" | "kyc" | "documents" | "final">("interview");
+  const [, setJourneyStep] = useState<"interview" | "kyc" | "upload-docs" | "final">("interview");
   const [journeyLoading, setJourneyLoading] = useState(false);
   const [journeyError, setJourneyError] = useState("");
   const [preapproval, setPreapproval] = useState<PreapprovalData | null>(null);
   const [kycResult, setKycResult] = useState<KycResult | null>(null);
   const [aadhaarNumber, setAadhaarNumber] = useState("");
   const [panNumber, setPanNumber] = useState("");
-  const [requiredDocs, setRequiredDocs] = useState<string[]>([]);
-  const [uploadedDocs, setUploadedDocs] = useState<Record<string, boolean>>({});
-  const [documentStatus, setDocumentStatus] = useState<"PENDING" | "VERIFIED">("PENDING");
   const [finalDecision, setFinalDecision] = useState<FinalDecision | null>(null);
   const [sessionDropped, setSessionDropped] = useState(false);
   const sessionDropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const phaseRef = useRef<CallPhase>("connecting");
   const [addressCheck, setAddressCheck] = useState<{
     aadhaar_address?: string;
     proof_address?: string;
@@ -137,7 +135,6 @@ function CallPageInner() {
   const getTimestamp = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   const currentLoanType = preapproval?.loan_type || "personal";
   const currentLoanLabel = prettifyLoanType(currentLoanType);
-  const currentRequiredDocs = requiredDocs.length > 0 ? requiredDocs : [];
 
   const fileToDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -199,6 +196,14 @@ function CallPageInner() {
   }, []);
 
   useEffect(() => {
+    phaseRef.current = phase;
+    if (phase !== "conversation") {
+      if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+      setSessionDropped(false);
+    }
+  }, [phase]);
+
+  useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
@@ -208,6 +213,7 @@ function CallPageInner() {
     const videoTrack = mediaStream.getVideoTracks()[0];
     if (!videoTrack) return;
     const onEnded = () => {
+      if (phaseRef.current !== "conversation") return;
       if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
       sessionDropTimerRef.current = setTimeout(() => {
         setSessionDropped(true);
@@ -304,103 +310,14 @@ function CallPageInner() {
         return;
       }
 
-      const reqRes = await fetch(
-        `${BACKEND}/api/documents/requirements?loan_type=${encodeURIComponent(preapproval.loan_type)}`,
-      );
-      if (!reqRes.ok) throw new Error("Failed to load document requirements");
-      const reqJson = (await reqRes.json()) as { required_documents: string[] };
-      const docs = reqJson.required_documents || [];
-      setRequiredDocs(docs);
-      setUploadedDocs(Object.fromEntries(docs.map((d) => [d, false])));
-      setJourneyStep("documents");
-      setPhase("documents");
+      setJourneyStep("upload-docs");
+      setPhase("upload-docs");
     } catch (error) {
       setJourneyError(error instanceof Error ? error.message : "Unable to complete KYC at the moment.");
     } finally {
       setJourneyLoading(false);
     }
   }, [BACKEND, aadhaarNumber, panNumber, preapproval, captureSelfie]);
-
-  const markDocUploaded = useCallback((doc: string) => {
-    setUploadedDocs((prev) => ({ ...prev, [doc]: true }));
-  }, []);
-
-  const handleVerifyDocumentsAndDecide = useCallback(async () => {
-    if (!preapproval || !kycResult) return;
-    setJourneyError("");
-    setJourneyLoading(true);
-    try {
-      const uploaded = Object.entries(uploadedDocs)
-        .filter(([, ok]) => ok)
-        .map(([name]) => name);
-
-      const docRes = await fetch(`${BACKEND}/api/documents/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          loan_type: preapproval.loan_type,
-          required_documents: requiredDocs,
-          uploaded_documents: uploaded,
-        }),
-      });
-      const docJson = (await docRes.json()) as { document_status: "PENDING" | "VERIFIED"; missing_documents: string[] };
-      setDocumentStatus(docJson.document_status || "PENDING");
-
-      const decisionRes = await fetch(`${BACKEND}/api/decision/evaluate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          income: preapproval.monthly_income,
-          requested_amount: preapproval.requested_loan_amount,
-          eligible_amount: preapproval.eligible_amount,
-          kyc_status: kycResult.kyc_status,
-          document_status: docJson.document_status,
-          risk_flag: kycResult.risk_flag,
-        }),
-      });
-      if (!decisionRes.ok) throw new Error("Decision engine failed");
-      const decision = (await decisionRes.json()) as FinalDecision;
-      setFinalDecision(decision);
-
-      const transcriptText = messagesRef.current.map((m) => `[${m.role}] ${m.content}`).join("\n");
-      try {
-        await fetch(`${BACKEND}/api/log-session`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            schema_version: "2026-04",
-            session_id: sessionIdRef.current,
-            campaign_id: campaignId || undefined,
-            lead_id: leadId || undefined,
-            source_channel: "video_call",
-            phone: phone || undefined,
-            room_url: roomUrl || undefined,
-            transcript_text: transcriptText,
-            messages: messagesRef.current,
-            extracted: preapproval,
-            risk: { kyc_status: kycResult.kyc_status, risk_flag: kycResult.risk_flag },
-            offer: {
-              status: decision.decision_status,
-              loan_amount: decision.final_approved_amount,
-              interest_rate: decision.interest_rate,
-              tenure_options: decision.tenure_options,
-            },
-            decision_trace: [decision.reason],
-            client_started_at: sessionStartedAtRef.current,
-          }),
-        });
-      } catch {
-        /* best effort */
-      }
-
-      setJourneyStep("final");
-      setPhase("upload-docs");
-    } catch {
-      setJourneyError("Unable to verify documents or compute final decision.");
-    } finally {
-      setJourneyLoading(false);
-    }
-  }, [BACKEND, campaignId, leadId, phone, preapproval, requiredDocs, uploadedDocs, roomUrl, kycResult]);
 
   // ── 4. Send transcript to agent (stable callback — uses ref for history) ──
   const sendToAgent = useCallback(async (text: string) => {
@@ -524,7 +441,8 @@ function CallPageInner() {
           },
           onError: () => setSttStatus("failed"),
           onClose: () => {
-            // Change 4: Start 5-second drop timer on STT disconnect
+            // Only count as drop while still in active conversation.
+            if (phaseRef.current !== "conversation") return;
             if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
             sessionDropTimerRef.current = setTimeout(() => {
               setSessionDropped(true);
@@ -583,10 +501,12 @@ function CallPageInner() {
   };
 
   const handleDocumentSubmit = async () => {
-    if (!aadhaarFile || !panFile || !addressFile) return;
+    if (!aadhaarFile || !panFile || !addressFile || !preapproval || !kycResult) return;
+    setJourneyError("");
     setAddressCheck(null);
     setAddressCheckError("");
     setIsUploadingDocs(true);
+    setJourneyLoading(true);
     try {
       const [aadhaarImage, panImage, addressProofImage] = await Promise.all([
         fileToDataUrl(aadhaarFile),
@@ -648,14 +568,33 @@ function CallPageInner() {
       }
 
       if (verifyData.matches) {
+        const decisionRes = await fetch(`${BACKEND}/api/decision/evaluate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            income: preapproval.monthly_income,
+            requested_amount: preapproval.requested_loan_amount,
+            eligible_amount: preapproval.eligible_amount,
+            kyc_status: kycResult.kyc_status,
+            document_status: "VERIFIED",
+            risk_flag: kycResult.risk_flag,
+          }),
+        });
+        if (!decisionRes.ok) throw new Error("Decision engine failed");
+        const decision = (await decisionRes.json()) as FinalDecision;
+        setFinalDecision(decision);
+        setJourneyStep("final");
         setPhase("offer");
       } else {
         setAddressCheckError("Address mismatch found. Please upload documents with matching addresses.");
       }
     } catch (err) {
-      setAddressCheckError(err instanceof Error ? err.message : "Unable to verify address right now.");
+      const msg = err instanceof Error ? err.message : "Unable to verify address right now.";
+      setAddressCheckError(msg);
+      setJourneyError(msg);
     } finally {
       setIsUploadingDocs(false);
+      setJourneyLoading(false);
     }
   };
 
@@ -916,116 +855,6 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "upload-docs" && (
-            <div className="w-full max-w-md mx-auto space-y-4">
-              <div className="glass-card p-8">
-                <h2 className="text-xl font-semibold text-white mb-2 text-center">
-                  Upload Documents
-                </h2>
-                <p className="text-sm text-slate-400 mb-6 text-center">
-                  Please upload clear images of your Aadhaar, PAN card, and an Address Proof to complete the KYC process.
-                </p>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Aadhaar Card (Front & Back)</label>
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      multiple
-                      onChange={(e) => setAadhaarFile(e.target.files?.[0] || null)}
-                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">PAN Card</label>
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      onChange={(e) => setPanFile(e.target.files?.[0] || null)}
-                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Address Proof</label>
-                    <p className="text-xs text-slate-400 mb-2 mt-[-4px]">E.g. Driver's License, Passport, or Utility Bill</p>
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      multiple
-                      onChange={(e) => setAddressFile(e.target.files?.[0] || null)}
-                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
-                    />
-                  </div>
-                </div>
-                <button
-                  disabled={isUploadingDocs || !aadhaarFile || !panFile || !addressFile}
-                  className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => {
-                    void handleDocumentSubmit();
-                  }}
-                >
-                  {isUploadingDocs ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Uploading...
-                    </>
-                  ) : (
-                    "Submit Documents"
-                  )}
-                </button>
-                {addressCheck && (
-                  <div
-                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
-                      addressCheck.matches
-                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
-                        : "bg-amber-500/10 border-amber-500/30 text-amber-200"
-                    }`}
-                  >
-                    <p className="font-medium">
-                      {addressCheck.matches ? "Address verification passed" : "Address verification failed"}
-                    </p>
-                    <p className="mt-1 text-xs opacity-90">{addressCheck.reason}</p>
-                    <p className="mt-1 text-xs opacity-90">
-                      Name: {addressCheck.name_match ? "match" : "mismatch"} · DOB: {addressCheck.dob_match ? "match" : "mismatch"} · Gender: {addressCheck.gender_match ? "match" : "mismatch"}
-                    </p>
-                    <p className="mt-1 text-xs opacity-90">
-                      Aadhaar: {addressCheck.aadhaar_number_valid ? "valid" : "invalid"} · PAN: {addressCheck.pan_number_valid ? "valid" : "invalid"}
-                    </p>
-                    {addressCheck.blood_group && (
-                      <p className="mt-1 text-xs opacity-90">Blood Group: {addressCheck.blood_group}</p>
-                    )}
-                    {(addressCheck.proof_city || addressCheck.geo_city) && (
-                      <p className="mt-1 text-xs opacity-90">
-                        Proof city: {addressCheck.proof_city || "N/A"} · Current city: {addressCheck.geo_city || "N/A"} ·
-                        {" "}
-                        City check:{" "}
-                        {addressCheck.city_match == null ? "not available" : addressCheck.city_match ? "match" : "mismatch"}
-                      </p>
-                    )}
-                    {addressCheck.aadhaar_photo_base64 && (
-                      <div className="mt-3">
-                        <p className="text-xs opacity-90 mb-2">Extracted Aadhaar photo</p>
-                        <img
-                          src={addressCheck.aadhaar_photo_base64}
-                          alt="Extracted Aadhaar profile"
-                          className="h-20 w-20 rounded-lg object-cover border border-white/20"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-                {addressCheckError && (
-                  <p className="mt-3 text-xs text-red-300">
-                    {addressCheckError}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
           {phase === "kyc" && preapproval && (
             <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
               <h2 className="text-xl font-semibold text-white">KYC Verification</h2>
@@ -1065,51 +894,6 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "documents" && preapproval && (
-            <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
-              <h2 className="text-xl font-semibold text-white">Document Collection</h2>
-              <p className="text-sm text-slate-300">Loan type: {preapproval.loan_type}</p>
-
-              <div className="space-y-3">
-                {requiredDocs.map((doc) => (
-                  <div key={doc} className="p-3 rounded-lg border border-white/[0.12] bg-white/[0.03]">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-sm text-slate-200">{doc}</span>
-                      <span className={`text-xs ${uploadedDocs[doc] ? "text-emerald-300" : "text-slate-400"}`}>
-                        {uploadedDocs[doc] ? "Uploaded" : "Pending"}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <input
-                        type="file"
-                        className="text-xs text-slate-300"
-                        onChange={(e) => {
-                          if (e.target.files && e.target.files.length > 0) markDocUploaded(doc);
-                        }}
-                      />
-                      <button
-                        onClick={() => markDocUploaded(doc)}
-                        className="px-2 py-1 text-xs rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-400/30"
-                      >
-                        Simulate Upload
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <p className="text-xs text-slate-400">Document status: {documentStatus}</p>
-              {journeyError && <p className="text-sm text-amber-300">{journeyError}</p>}
-
-              <button
-                onClick={handleVerifyDocumentsAndDecide}
-                disabled={journeyLoading}
-                className="btn-primary w-full disabled:opacity-60"
-              >
-                {journeyLoading ? "Evaluating Decision..." : "Verify Documents & Get Final Decision"}
-              </button>
-            </div>
-          )}
 
           {phase === "offer" && finalDecision && preapproval && (
             <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
@@ -1267,18 +1051,17 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "documents" && preapproval && (
+          {phase === "upload-docs" && preapproval && (
             <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 3</p>
-                <h3 className="text-lg font-semibold text-white">Document Verification</h3>
-                <p className="text-sm text-slate-400 mt-1">Checklist changes with the loan type.</p>
+                <h3 className="text-lg font-semibold text-white">Upload Documents</h3>
+                <p className="text-sm text-slate-400 mt-1">Required for all loans.</p>
               </div>
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Loan type</p>
-                <p className="text-sm text-white font-medium">{currentLoanLabel}</p>
-                <div className="space-y-2 pt-2">
-                  {currentRequiredDocs.map((doc) => (
+                <p className="text-xs text-slate-400">Mandatory documents</p>
+                <div className="space-y-2 pt-1">
+                  {["Aadhaar Card", "PAN Card", "One Address Proof"].map((doc) => (
                     <div key={doc} className="flex items-start gap-2 text-sm text-slate-200">
                       <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
                       <span>{doc}</span>

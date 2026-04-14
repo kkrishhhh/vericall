@@ -1,4 +1,4 @@
-"""Modular NBFC-style loan journey helpers: interview, KYC, docs, decision."""
+"""Core interview/KYC/decision helpers without loan-type doc branching."""
 
 from __future__ import annotations
 
@@ -49,7 +49,6 @@ def _loan_type_key(loan_type: str) -> str:
 
 
 def compute_preapproval(profile: dict) -> dict:
-    """Compute simple pre-approval amount X from interview details."""
     name = str(profile.get("name") or "Customer").strip()
     employment = _employment_bucket(str(profile.get("employment_type") or profile.get("employment") or ""))
     income = max(0.0, _to_float(profile.get("monthly_income") or profile.get("income")))
@@ -61,12 +60,11 @@ def compute_preapproval(profile: dict) -> dict:
         mult_min, mult_max = 10, 15
     elif employment == "self-employed":
         mult_min, mult_max = 6, 10
-    else:  # professional
+    else:
         mult_min, mult_max = 8, 12
 
     eligible_min = round(income * mult_min, 0)
     eligible_max = round(income * mult_max, 0)
-
     message = (
         f"You requested INR {requested:,.0f}. "
         f"Based on your profile, you are pre-approved up to INR {eligible_max:,.0f}."
@@ -87,7 +85,6 @@ def compute_preapproval(profile: dict) -> dict:
 
 
 def verify_kyc(payload: dict) -> dict:
-    """Mock Aadhaar/PAN/selfie verification for KYC-only identity checks."""
     aadhaar = (payload.get("aadhaar_number") or "").strip()
     pan = (payload.get("pan_number") or "").strip().upper()
     selfie = payload.get("selfie_image") or ""
@@ -98,7 +95,7 @@ def verify_kyc(payload: dict) -> dict:
 
     base = f"{aadhaar}|{pan}|{len(selfie)}".encode("utf-8")
     hashed = int(hashlib.sha256(base).hexdigest()[:8], 16)
-    match_score = round(0.55 + (hashed % 41) / 100, 2) if selfie_ok else 0.0  # 0.55..0.95
+    match_score = round(0.55 + (hashed % 41) / 100, 2) if selfie_ok else 0.0
     face_match_ok = match_score >= 0.65
 
     declared_age = int(_to_float(payload.get("declared_age"), 0.0))
@@ -110,7 +107,6 @@ def verify_kyc(payload: dict) -> dict:
             risk_flag = "HIGH_RISK"
 
     verified = aadhaar_ok and pan_ok and selfie_ok and face_match_ok
-
     return {
         "kyc_status": "VERIFIED" if verified else "FAILED",
         "aadhaar_valid": aadhaar_ok,
@@ -121,104 +117,7 @@ def verify_kyc(payload: dict) -> dict:
     }
 
 
-def get_required_documents(loan_type: str) -> list[str]:
-    """Return required documents by loan type."""
-    lt = _loan_type_key(loan_type)
-    mapping = {
-        "personal": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Bank Statements (3-6 months)",
-            "Salary Slips (if salaried) / ITR (if self-employed)",
-            "Selfie / Video KYC",
-        ],
-        "instant": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Bank Account Access (Net Banking / AA)",
-        ],
-        "professional": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Professional Degree Certificate",
-            "Registration Certificate (e.g., ICAI, Medical Council)",
-            "Bank Statements (6-12 months)",
-            "ITR / Financials",
-        ],
-        "pre-owned car": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Bank Statements",
-            "Salary Slips / ITR",
-            "Vehicle RC",
-            "Insurance Copy",
-        ],
-        "medical equipment": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Business Proof",
-            "Financial Statements (2-3 years)",
-            "GST Returns",
-            "Bank Statements",
-            "Equipment Quotation",
-        ],
-        "loan against property": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Property Documents (Title/Sale Deed)",
-            "Property Tax Receipts",
-            "Salary Slips / ITR",
-            "Bank Statements (6-12 months)",
-        ],
-        "business": [
-            "Aadhaar Card",
-            "PAN Card",
-            "GST Registration / Business Proof",
-            "Bank Statements (6-12 months)",
-            "ITR (1-2 years)",
-        ],
-        "commercial vehicle": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Driving License",
-            "Vehicle Quotation",
-            "Bank Statements",
-            "Income Proof",
-        ],
-        "gold": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Gold (for valuation)",
-        ],
-        "education": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Admission Letter",
-            "Fee Structure",
-            "Academic Records",
-            "Co-applicant Income Proof",
-        ],
-        "consumer durable": [
-            "Aadhaar Card",
-            "PAN Card",
-            "Basic KYC / Income Proof (if required)",
-        ],
-    }
-    return mapping.get(lt, ["Aadhaar Card", "PAN Card", "Bank Statements", "Income Proof"])
-
-
-def verify_documents(required_documents: list[str], uploaded_documents: list[str]) -> dict:
-    uploaded_set = {str(x).strip().lower() for x in uploaded_documents if str(x).strip()}
-    missing = [d for d in required_documents if d.strip().lower() not in uploaded_set]
-    verified = len(missing) == 0
-    return {
-        "document_status": "VERIFIED" if verified else "PENDING",
-        "missing_documents": missing,
-    }
-
-
 def evaluate_decision(payload: dict) -> dict:
-    """Simple rule-based final decision engine."""
     income = max(0.0, _to_float(payload.get("income")))
     requested_amount = max(0.0, _to_float(payload.get("requested_amount")))
     eligible_amount = max(0.0, _to_float(payload.get("eligible_amount")))
@@ -235,7 +134,6 @@ def evaluate_decision(payload: dict) -> dict:
             "reason": "KYC_NOT_VERIFIED",
             "risk_flag": risk_flag,
         }
-
     if document_status != "VERIFIED":
         return {
             "decision_status": "HOLD",
@@ -246,11 +144,7 @@ def evaluate_decision(payload: dict) -> dict:
             "risk_flag": risk_flag,
         }
 
-    if requested_amount <= eligible_amount:
-        approved = requested_amount
-    else:
-        approved = eligible_amount
-
+    approved = requested_amount if requested_amount <= eligible_amount else eligible_amount
     interest_rate = 12.0 if approved <= eligible_amount else 12.5
     if income > 100000:
         interest_rate = max(10.5, interest_rate - 0.5)
