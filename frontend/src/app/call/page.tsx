@@ -6,6 +6,9 @@ import Link from "next/link";
 import TranscriptPanel from "@/components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
 import { connectDeepgramStt } from "@/lib/sttService";
+import { translations, Language } from "@/lib/translations";
+
+const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
 
 interface Message {
   role: "user" | "agent";
@@ -13,7 +16,45 @@ interface Message {
   timestamp?: string;
 }
 
-type CallPhase = "connecting" | "conversation" | "analyzing" | "upload-docs" | "offer" | "error";
+type CallPhase = "connecting" | "conversation" | "analyzing" | "kyc" | "documents" | "upload-docs" | "offer" | "error";
+
+interface PreapprovalData {
+  name: string;
+  employment_type: string;
+  monthly_income: number;
+  loan_type: string;
+  requested_loan_amount: number;
+  declared_age?: number;
+  eligible_amount: number;
+  eligible_min: number;
+  eligible_max: number;
+  message: string;
+}
+
+interface KycResult {
+  kyc_status: "VERIFIED" | "FAILED";
+  aadhaar_valid: boolean;
+  pan_valid: boolean;
+  selfie_captured: boolean;
+  face_match_score: number;
+  risk_flag: string;
+}
+
+interface FinalDecision {
+  decision_status: "APPROVED" | "REJECTED" | "HOLD";
+  final_approved_amount: number;
+  interest_rate: number;
+  tenure_options: number[];
+  reason: string;
+  risk_flag: string;
+}
+
+function prettifyLoanType(loanType: string) {
+  return loanType
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
+}
 
 function CallPageInner() {
   const searchParams = useSearchParams();
@@ -23,7 +64,7 @@ function CallPageInner() {
   const leadId = searchParams.get("lead_id") || "";
   const lang = searchParams.get("lang") || "en";
 
-  const TTS_LANG_MAP: Record<string, string> = { en: "en-IN", hi: "hi-IN", mr: "mr-IN" };
+  const t = translations[lang as Language] || translations.en;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -37,10 +78,8 @@ function CallPageInner() {
   const [interimText, setInterimText] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [sttStatus, setSttStatus] = useState<"idle" | "connecting" | "live" | "failed">("idle");
-  const [conversationHistory, setConversationHistory] = useState<{ role: string; content: string }[]>([]);
-  const [offerData, setOfferData] = useState<Record<string, unknown> | null>(null);
-  const [agentData, setAgentData] = useState<Record<string, unknown> | null>(null);
-  const [riskSnapshot, setRiskSnapshot] = useState<Record<string, unknown> | null>(null);
+  const [offerData] = useState<Record<string, unknown> | null>(null);
+  const [riskSnapshot] = useState<Record<string, unknown> | null>(null);
   const [customerSnapshot, setCustomerSnapshot] = useState<Record<string, unknown> | null>(null);
   const [processingStep, setProcessingStep] = useState("");
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
@@ -50,6 +89,19 @@ function CallPageInner() {
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number } | null>(null);
   const [manualInput, setManualInput] = useState("");
   const [agentNotice, setAgentNotice] = useState("");
+  const [, setJourneyStep] = useState<"interview" | "kyc" | "documents" | "final">("interview");
+  const [journeyLoading, setJourneyLoading] = useState(false);
+  const [journeyError, setJourneyError] = useState("");
+  const [preapproval, setPreapproval] = useState<PreapprovalData | null>(null);
+  const [kycResult, setKycResult] = useState<KycResult | null>(null);
+  const [aadhaarNumber, setAadhaarNumber] = useState("");
+  const [panNumber, setPanNumber] = useState("");
+  const [requiredDocs, setRequiredDocs] = useState<string[]>([]);
+  const [uploadedDocs, setUploadedDocs] = useState<Record<string, boolean>>({});
+  const [documentStatus, setDocumentStatus] = useState<"PENDING" | "VERIFIED">("PENDING");
+  const [finalDecision, setFinalDecision] = useState<FinalDecision | null>(null);
+  const [sessionDropped, setSessionDropped] = useState(false);
+  const sessionDropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [addressCheck, setAddressCheck] = useState<{
     aadhaar_address?: string;
     proof_address?: string;
@@ -83,6 +135,9 @@ function CallPageInner() {
   const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
 
   const getTimestamp = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  const currentLoanType = preapproval?.loan_type || "personal";
+  const currentLoanLabel = prettifyLoanType(currentLoanType);
+  const currentRequiredDocs = requiredDocs.length > 0 ? requiredDocs : [];
 
   const fileToDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -147,234 +202,205 @@ function CallPageInner() {
     messagesRef.current = messages;
   }, [messages]);
 
+  // ── Change 4: Monitor video track for session drop ──
+  useEffect(() => {
+    if (!mediaStream) return;
+    const videoTrack = mediaStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    const onEnded = () => {
+      if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+      sessionDropTimerRef.current = setTimeout(() => {
+        setSessionDropped(true);
+      }, 5000);
+    };
+    videoTrack.addEventListener("ended", onEnded);
+    return () => {
+      videoTrack.removeEventListener("ended", onEnded);
+      if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+    };
+  }, [mediaStream]);
+
   // ── 3. Post-conversation pipeline (declared before STT / agent) ──
   const handleConversationComplete = useCallback(
     async (customerInput: Record<string, unknown>) => {
       setPhase("analyzing");
+      setJourneyError("");
 
       try {
-        let merged: Record<string, unknown> = { ...customerInput };
-
-        const userLines = messagesRef.current
-          .filter((m) => m.role === "user")
-          .map((m) => m.content)
-          .join("\n");
-
-        let extractionPromise: Promise<Record<string, unknown> | null> | null = null;
-        if (userLines.trim().length > 12) {
-          extractionPromise = (async () => {
-            setProcessingStep("Normalizing spoken details...");
-            try {
-              const exRes = await fetch(`${BACKEND}/api/extract`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ conversation_text: userLines }),
-              });
-              if (!exRes.ok) return null;
-              return (await exRes.json()) as Record<string, unknown>;
-            } catch {
-              return null;
-            }
-          })();
-        }
-
-        setProcessingStep("Please face the camera directly in good lighting.");
-        let faceResult: Record<string, unknown> = {
-          estimated_age: 0,
-          confidence: 0,
-          face_detected: false,
+        const interviewPayload = {
+          name: String(customerInput.name || ""),
+          employment_type: String(customerInput.employment_type || customerInput.employment || ""),
+          monthly_income: Number(customerInput.monthly_income || customerInput.income || 0),
+          loan_type: String(customerInput.loan_type || customerInput.purpose || customerInput.loan_purpose || "personal"),
+          requested_loan_amount: Number(customerInput.requested_loan_amount || customerInput.requested_amount || 0),
+          declared_age: Number(customerInput.declared_age || customerInput.age || 0),
         };
 
-        // Use current known age first; merge extraction later without blocking face capture.
-        const initialDeclaredAge = Number(merged.age || customerInput.age || 0);
-
-        if (videoRef.current) {
-          setProcessingStep("Capturing video for age verification…");
-
-          const video = videoRef.current;
-          const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth || 640;
-          canvas.height = video.videoHeight || 480;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            const frames: string[] = [];
-            for (let i = 0; i < 2; i++) {
-              ctx.drawImage(video, 0, 0);
-              frames.push(canvas.toDataURL("image/jpeg", 0.75));
-              if (i < 1) await new Promise((r) => setTimeout(r, 140));
-            }
-            try {
-              setProcessingStep("Estimating age from your face vs what you said…");
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-              const faceRes = await fetch(`${BACKEND}/api/analyze-face`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  images: frames,
-                  ...(initialDeclaredAge > 0 ? { declared_age: initialDeclaredAge } : {}),
-                }),
-                signal: controller.signal,
-              });
-              clearTimeout(timeoutId);
-              if (faceRes.ok) {
-                faceResult = await faceRes.json();
-                const msg = String(faceResult.verification_message || "");
-                if (msg) setProcessingStep(msg.slice(0, 120) + (msg.length > 120 ? "…" : ""));
-              }
-            } catch {
-              /* continue */
-            }
-          }
-        }
-
-        if (extractionPromise) {
-          const ex = await extractionPromise;
-          if (ex) {
-            const pick = (a: unknown, b: unknown) =>
-              a !== undefined && a !== null && a !== "" && !(typeof a === "number" && a === 0) ? a : b;
-            merged = {
-              ...merged,
-              name: pick(merged.name, ex.name) ?? "",
-              age: Number(pick(merged.age, ex.age)) || 0,
-              income: Number(pick(merged.income, ex.income)) || 0,
-              employment: String(pick(merged.employment, ex.employment) ?? ""),
-              purpose: String(
-                pick(merged.purpose, pick(merged.loan_purpose, ex.loan_purpose)) ?? "",
-              ),
-              loan_purpose: String(
-                pick(merged.loan_purpose, pick(merged.purpose, ex.loan_purpose)) ?? "",
-              ),
-              consent: Boolean(merged.consent) || Boolean(ex.consent),
-            };
-          }
-        }
-
-        const declaredAge = Number(merged.age || 0);
-
-        setProcessingStep("Running fraud & risk checks...");
-        const purpose =
-          String(merged.purpose || merged.loan_purpose || "").trim() ||
-          String(customerInput.purpose || customerInput.loan_purpose || "");
-
-        const customerData = {
-          name: String(merged.name || ""),
-          declared_age: declaredAge,
-          income: Number(merged.income || 0),
-          employment: String(merged.employment || ""),
-          purpose,
-          consent: Boolean(merged.consent),
-          estimated_age: faceResult.face_detected ? Number(faceResult.estimated_age) || null : null,
-          age_confidence: faceResult.face_detected ? Number(faceResult.confidence) || null : null,
-          age_match_score:
-            declaredAge > 0 && faceResult.face_detected && faceResult.age_match_score != null
-              ? Number(faceResult.age_match_score)
-              : null,
-          latitude: locationData?.latitude || null,
-          longitude: locationData?.longitude || null,
-        };
-
-        const riskRes = await fetch(`${BACKEND}/api/assess-risk`, {
+        setProcessingStep("Generating pre-approval...");
+        const preRes = await fetch(`${BACKEND}/api/interview/preapprove`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customer: customerData,
-            face_analysis: faceResult.face_detected ? faceResult : null,
-            location: locationData,
-          }),
+          body: JSON.stringify(interviewPayload),
         });
-        const riskResult = await riskRes.json();
+        if (!preRes.ok) throw new Error("Failed to generate pre-approval");
 
-        setProcessingStep("Generating your personalized offer...");
-        const offerRes = await fetch(`${BACKEND}/api/generate-offer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customer: customerData,
-            risk_band: riskResult.risk_band,
-            risk_score: Number(riskResult.risk_score || 50),
-            fraud_flags: riskResult.fraud_flags,
-            bureau: riskResult.bureau || {},
-            propensity: riskResult.propensity || {},
-          }),
-        });
-        const offer = await offerRes.json();
+        const pre = (await preRes.json()) as PreapprovalData;
+        setPreapproval(pre);
+        setCustomerSnapshot({ interview: interviewPayload });
 
-        setCustomerSnapshot({ ...customerData, raw_agent: customerInput, merged });
-        setRiskSnapshot(riskResult);
-        setOfferData(offer);
-
-        const transcriptText = messagesRef.current
-          .map((m) => `[${m.role}] ${m.content}`)
-          .join("\n");
-
-        try {
-          const decisionTrace = [
-            ...(Array.isArray(riskResult?.decision_reasons) ? riskResult.decision_reasons : []),
-            ...(Array.isArray(offer?.explainability?.reason_codes)
-              ? offer.explainability.reason_codes.map((x: string) => `Offer reason: ${x}`)
-              : []),
-          ];
-
-          const logRes = await fetch(`${BACKEND}/api/log-session`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              schema_version: "2026-04",
-              session_id: sessionIdRef.current,
-              campaign_id: campaignId || undefined,
-              lead_id: leadId || undefined,
-              source_channel: "video_call",
-              phone: phone || undefined,
-              room_url: roomUrl || undefined,
-              transcript_text: transcriptText,
-              messages: messagesRef.current,
-              extracted: merged,
-              risk: riskResult,
-              bureau: riskResult?.bureau || {},
-              propensity: riskResult?.propensity || {},
-              offer,
-              decision_trace: decisionTrace,
-              model_versions: {
-                agent: "llama-3.3-70b-versatile",
-                extraction: "llama-3.3-70b-versatile",
-                propensity: "propensity_formula_v1",
-                bureau: "mock_bureau_v1",
-              },
-              client_started_at: sessionStartedAtRef.current,
-            }),
-          });
-          const logJson = logRes.ok ? await logRes.json() : null;
-          if (logJson && typeof logJson === "object" && "session_id" in logJson) {
-            sessionIdRef.current = String((logJson as { session_id: string }).session_id);
-          }
-        } catch {
-          /* audit log best-effort */
+        // Change 3: Block if consent is false
+        const consentGiven = Boolean(customerInput.consent);
+        if (!consentGiven) {
+          setJourneyError("KYC cannot proceed without consent as required by RBI guidelines.");
+          setPhase("error");
+          return;
         }
 
-        try {
-          sessionStorage.setItem(
-            "vericall_last_session",
-            JSON.stringify({
-              session_id: sessionIdRef.current,
-              at: new Date().toISOString(),
-              customer: customerData,
-              risk: riskResult,
-              offer,
-            }),
-          );
-        } catch {
-          /* ignore */
-        }
-
-        setPhase("upload-docs");
+        setJourneyStep("kyc");
+        setPhase("kyc");
       } catch {
         setPhase("error");
       }
     },
-    [BACKEND, campaignId, leadId, locationData, phone, roomUrl],
+    [BACKEND],
   );
+
+  const captureSelfie = useCallback((): string | null => {
+    if (!videoRef.current) return null;
+    const video = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.75);
+  }, []);
+
+  const handleVerifyKyc = useCallback(async () => {
+    if (!preapproval) return;
+    setJourneyError("");
+    setJourneyLoading(true);
+    try {
+      const selfie = captureSelfie();
+      if (!selfie) throw new Error("Camera preview is unavailable. Keep the camera open and try KYC again.");
+
+      const kycRes = await fetch(`${BACKEND}/api/kyc/verify-identity`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aadhaar_number: aadhaarNumber,
+          pan_number: panNumber,
+          selfie_image: selfie,
+          declared_age: preapproval.declared_age || 0,
+        }),
+      });
+      const kyc = (await kycRes.json()) as KycResult;
+      setKycResult(kyc);
+
+      if (!kycRes.ok || kyc.kyc_status !== "VERIFIED") {
+        setJourneyError("KYC failed. Please verify Aadhaar/PAN and ensure a clear face capture.");
+        setJourneyLoading(false);
+        return;
+      }
+
+      const reqRes = await fetch(
+        `${BACKEND}/api/documents/requirements?loan_type=${encodeURIComponent(preapproval.loan_type)}`,
+      );
+      if (!reqRes.ok) throw new Error("Failed to load document requirements");
+      const reqJson = (await reqRes.json()) as { required_documents: string[] };
+      const docs = reqJson.required_documents || [];
+      setRequiredDocs(docs);
+      setUploadedDocs(Object.fromEntries(docs.map((d) => [d, false])));
+      setJourneyStep("documents");
+      setPhase("documents");
+    } catch (error) {
+      setJourneyError(error instanceof Error ? error.message : "Unable to complete KYC at the moment.");
+    } finally {
+      setJourneyLoading(false);
+    }
+  }, [BACKEND, aadhaarNumber, panNumber, preapproval, captureSelfie]);
+
+  const markDocUploaded = useCallback((doc: string) => {
+    setUploadedDocs((prev) => ({ ...prev, [doc]: true }));
+  }, []);
+
+  const handleVerifyDocumentsAndDecide = useCallback(async () => {
+    if (!preapproval || !kycResult) return;
+    setJourneyError("");
+    setJourneyLoading(true);
+    try {
+      const uploaded = Object.entries(uploadedDocs)
+        .filter(([, ok]) => ok)
+        .map(([name]) => name);
+
+      const docRes = await fetch(`${BACKEND}/api/documents/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          loan_type: preapproval.loan_type,
+          required_documents: requiredDocs,
+          uploaded_documents: uploaded,
+        }),
+      });
+      const docJson = (await docRes.json()) as { document_status: "PENDING" | "VERIFIED"; missing_documents: string[] };
+      setDocumentStatus(docJson.document_status || "PENDING");
+
+      const decisionRes = await fetch(`${BACKEND}/api/decision/evaluate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          income: preapproval.monthly_income,
+          requested_amount: preapproval.requested_loan_amount,
+          eligible_amount: preapproval.eligible_amount,
+          kyc_status: kycResult.kyc_status,
+          document_status: docJson.document_status,
+          risk_flag: kycResult.risk_flag,
+        }),
+      });
+      if (!decisionRes.ok) throw new Error("Decision engine failed");
+      const decision = (await decisionRes.json()) as FinalDecision;
+      setFinalDecision(decision);
+
+      const transcriptText = messagesRef.current.map((m) => `[${m.role}] ${m.content}`).join("\n");
+      try {
+        await fetch(`${BACKEND}/api/log-session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            schema_version: "2026-04",
+            session_id: sessionIdRef.current,
+            campaign_id: campaignId || undefined,
+            lead_id: leadId || undefined,
+            source_channel: "video_call",
+            phone: phone || undefined,
+            room_url: roomUrl || undefined,
+            transcript_text: transcriptText,
+            messages: messagesRef.current,
+            extracted: preapproval,
+            risk: { kyc_status: kycResult.kyc_status, risk_flag: kycResult.risk_flag },
+            offer: {
+              status: decision.decision_status,
+              loan_amount: decision.final_approved_amount,
+              interest_rate: decision.interest_rate,
+              tenure_options: decision.tenure_options,
+            },
+            decision_trace: [decision.reason],
+            client_started_at: sessionStartedAtRef.current,
+          }),
+        });
+      } catch {
+        /* best effort */
+      }
+
+      setJourneyStep("final");
+      setPhase("upload-docs");
+    } catch {
+      setJourneyError("Unable to verify documents or compute final decision.");
+    } finally {
+      setJourneyLoading(false);
+    }
+  }, [BACKEND, campaignId, leadId, phone, preapproval, requiredDocs, uploadedDocs, roomUrl, kycResult]);
 
   // ── 4. Send transcript to agent (stable callback — uses ref for history) ──
   const sendToAgent = useCallback(async (text: string) => {
@@ -422,7 +448,6 @@ function CallPageInner() {
         : [...history, { role: "assistant", content: data.message }];
 
       conversationHistoryRef.current = newHistory;
-      setConversationHistory(newHistory);
 
       setMessages((prev) => [
         ...prev,
@@ -433,6 +458,7 @@ function CallPageInner() {
       if ("speechSynthesis" in window) {
         window.speechSynthesis.cancel();
         const currentSpeakingId = ++speakingIdRef.current;
+        const speechWindow = window as Window & { _utterances?: SpeechSynthesisUtterance[] };
         
         sttConnRef.current?.setMuted(true);
         
@@ -442,8 +468,8 @@ function CallPageInner() {
         utterance.lang = TTS_LANG_MAP[lang] || "en-IN";
 
         // Prevent GC of utterance before onend fires
-        (window as any)._utterances = (window as any)._utterances || [];
-        (window as any)._utterances.push(utterance);
+        speechWindow._utterances = speechWindow._utterances || [];
+        speechWindow._utterances.push(utterance);
         
         const cleanup = () => {
           setTimeout(() => {
@@ -451,7 +477,7 @@ function CallPageInner() {
               sttConnRef.current?.setMuted(false);
             }
           }, 300);
-          (window as any)._utterances = (window as any)._utterances.filter((u: any) => u !== utterance);
+          speechWindow._utterances = (speechWindow._utterances || []).filter((u) => u !== utterance);
         };
         
         utterance.onend = cleanup;
@@ -461,13 +487,12 @@ function CallPageInner() {
       }
 
       if (data.done && data.data) {
-        setAgentData(data.data);
         handleConversationComplete(data.data);
       }
     } catch {
       // silently fail — will retry on next interval
     }
-  }, [BACKEND, handleConversationComplete]);
+  }, [BACKEND, handleConversationComplete, lang]);
 
   // ── 5. Connect Deepgram STT (via sttService) ───────────────
   useEffect(() => {
@@ -498,6 +523,13 @@ function CallPageInner() {
             }
           },
           onError: () => setSttStatus("failed"),
+          onClose: () => {
+            // Change 4: Start 5-second drop timer on STT disconnect
+            if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
+            sessionDropTimerRef.current = setTimeout(() => {
+              setSessionDropped(true);
+            }, 5000);
+          },
           onListeningChange: (v) => setIsListening(v),
           onFinalTranscript: (transcript) => {
             if (!transcript.trim()) return;
@@ -540,7 +572,7 @@ function CallPageInner() {
       sttConnRef.current = null;
       if (agentTimerRef.current) clearInterval(agentTimerRef.current);
     };
-  }, [phase, mediaStream, BACKEND, sendToAgent]);
+  }, [phase, mediaStream, BACKEND, sendToAgent, lang]);
 
   // ── Manual text input fallback ────────────────────────────
   const handleManualSend = () => {
@@ -628,9 +660,28 @@ function CallPageInner() {
   };
 
   return (
-    <main className="relative min-h-screen animated-gradient-bg overflow-hidden">
+    <main className="relative min-h-screen animated-gradient-bg overflow-hidden flex flex-col">
       <div className="orb orb-1" />
       <div className="orb orb-2" />
+
+      {/* Change 4: Session Drop Overlay */}
+      {sessionDropped && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="glass-card p-8 max-w-md text-center space-y-4">
+            <div className="w-16 h-16 mx-auto rounded-full bg-red-500/10 flex items-center justify-center">
+              <span className="text-3xl">⚠️</span>
+            </div>
+            <h2 className="text-xl font-semibold text-white">Session Interrupted</h2>
+            <p className="text-sm text-slate-400">Your video or voice connection was lost for more than 5 seconds. Please restart your KYC session.</p>
+            <button
+              onClick={() => window.location.href = "/"}
+              className="btn-primary w-full"
+            >
+              Restart Session
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Top Bar */}
       <header className="relative z-10 flex items-center justify-between px-6 py-4 glass border-b border-white/[0.06]">
@@ -666,7 +717,7 @@ function CallPageInner() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
-              <span className="text-xs text-emerald-400 font-medium">Listening</span>
+              <span className="text-xs text-emerald-400 font-medium">{t.listening}</span>
             </div>
           )}
           {phase === "conversation" && sttStatus === "connecting" && (
@@ -695,12 +746,12 @@ function CallPageInner() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-white mb-2">Connecting your camera...</h2>
-              <p className="text-sm text-slate-400">Please allow camera and microphone access</p>
+              <h2 className="text-xl font-semibold text-white mb-2">{t.initializingCall}</h2>
+              <p className="text-sm text-slate-400">{t.pleaseWait}</p>
             </div>
           )}
 
-          {(phase === "conversation" || phase === "analyzing") && (
+          {(phase === "conversation" || phase === "analyzing" || phase === "kyc") && (
             <div className="w-full max-w-2xl">
               <div className="relative rounded-2xl overflow-hidden glow-primary">
                 <video
@@ -865,7 +916,248 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "offer" && offerData && (
+          {phase === "upload-docs" && (
+            <div className="w-full max-w-md mx-auto space-y-4">
+              <div className="glass-card p-8">
+                <h2 className="text-xl font-semibold text-white mb-2 text-center">
+                  Upload Documents
+                </h2>
+                <p className="text-sm text-slate-400 mb-6 text-center">
+                  Please upload clear images of your Aadhaar, PAN card, and an Address Proof to complete the KYC process.
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">Aadhaar Card (Front & Back)</label>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      multiple
+                      onChange={(e) => setAadhaarFile(e.target.files?.[0] || null)}
+                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">PAN Card</label>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      onChange={(e) => setPanFile(e.target.files?.[0] || null)}
+                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">Address Proof</label>
+                    <p className="text-xs text-slate-400 mb-2 mt-[-4px]">E.g. Driver's License, Passport, or Utility Bill</p>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      multiple
+                      onChange={(e) => setAddressFile(e.target.files?.[0] || null)}
+                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                    />
+                  </div>
+                </div>
+                <button
+                  disabled={isUploadingDocs || !aadhaarFile || !panFile || !addressFile}
+                  className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    void handleDocumentSubmit();
+                  }}
+                >
+                  {isUploadingDocs ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Uploading...
+                    </>
+                  ) : (
+                    "Submit Documents"
+                  )}
+                </button>
+                {addressCheck && (
+                  <div
+                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+                      addressCheck.matches
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+                        : "bg-amber-500/10 border-amber-500/30 text-amber-200"
+                    }`}
+                  >
+                    <p className="font-medium">
+                      {addressCheck.matches ? "Address verification passed" : "Address verification failed"}
+                    </p>
+                    <p className="mt-1 text-xs opacity-90">{addressCheck.reason}</p>
+                    <p className="mt-1 text-xs opacity-90">
+                      Name: {addressCheck.name_match ? "match" : "mismatch"} · DOB: {addressCheck.dob_match ? "match" : "mismatch"} · Gender: {addressCheck.gender_match ? "match" : "mismatch"}
+                    </p>
+                    <p className="mt-1 text-xs opacity-90">
+                      Aadhaar: {addressCheck.aadhaar_number_valid ? "valid" : "invalid"} · PAN: {addressCheck.pan_number_valid ? "valid" : "invalid"}
+                    </p>
+                    {addressCheck.blood_group && (
+                      <p className="mt-1 text-xs opacity-90">Blood Group: {addressCheck.blood_group}</p>
+                    )}
+                    {(addressCheck.proof_city || addressCheck.geo_city) && (
+                      <p className="mt-1 text-xs opacity-90">
+                        Proof city: {addressCheck.proof_city || "N/A"} · Current city: {addressCheck.geo_city || "N/A"} ·
+                        {" "}
+                        City check:{" "}
+                        {addressCheck.city_match == null ? "not available" : addressCheck.city_match ? "match" : "mismatch"}
+                      </p>
+                    )}
+                    {addressCheck.aadhaar_photo_base64 && (
+                      <div className="mt-3">
+                        <p className="text-xs opacity-90 mb-2">Extracted Aadhaar photo</p>
+                        <img
+                          src={addressCheck.aadhaar_photo_base64}
+                          alt="Extracted Aadhaar profile"
+                          className="h-20 w-20 rounded-lg object-cover border border-white/20"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {addressCheckError && (
+                  <p className="mt-3 text-xs text-red-300">
+                    {addressCheckError}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {phase === "kyc" && preapproval && (
+            <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
+              <h2 className="text-xl font-semibold text-white">KYC Verification</h2>
+              <p className="text-sm text-slate-300">{preapproval.message}</p>
+              <p className="text-xs text-slate-400">KYC is identity-only: Aadhaar, PAN, and selfie match.</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  value={aadhaarNumber}
+                  onChange={(e) => setAadhaarNumber(e.target.value)}
+                  placeholder="Aadhaar (12 digits)"
+                  className="px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-white"
+                />
+                <input
+                  value={panNumber}
+                  onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
+                  placeholder="PAN (ABCDE1234F)"
+                  className="px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-white"
+                />
+              </div>
+
+              {kycResult && (
+                <p className={`text-sm ${kycResult.kyc_status === "VERIFIED" ? "text-emerald-300" : "text-amber-300"}`}>
+                  KYC Status: {kycResult.kyc_status} | Face match: {Math.round((kycResult.face_match_score || 0) * 100)}%
+                </p>
+              )}
+
+              {journeyError && <p className="text-sm text-amber-300">{journeyError}</p>}
+
+              <button
+                onClick={handleVerifyKyc}
+                disabled={journeyLoading}
+                className="btn-primary w-full disabled:opacity-60"
+              >
+                {journeyLoading ? "Verifying KYC..." : "Verify KYC"}
+              </button>
+            </div>
+          )}
+
+          {phase === "documents" && preapproval && (
+            <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
+              <h2 className="text-xl font-semibold text-white">Document Collection</h2>
+              <p className="text-sm text-slate-300">Loan type: {preapproval.loan_type}</p>
+
+              <div className="space-y-3">
+                {requiredDocs.map((doc) => (
+                  <div key={doc} className="p-3 rounded-lg border border-white/[0.12] bg-white/[0.03]">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-sm text-slate-200">{doc}</span>
+                      <span className={`text-xs ${uploadedDocs[doc] ? "text-emerald-300" : "text-slate-400"}`}>
+                        {uploadedDocs[doc] ? "Uploaded" : "Pending"}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        type="file"
+                        className="text-xs text-slate-300"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files.length > 0) markDocUploaded(doc);
+                        }}
+                      />
+                      <button
+                        onClick={() => markDocUploaded(doc)}
+                        className="px-2 py-1 text-xs rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-400/30"
+                      >
+                        Simulate Upload
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-xs text-slate-400">Document status: {documentStatus}</p>
+              {journeyError && <p className="text-sm text-amber-300">{journeyError}</p>}
+
+              <button
+                onClick={handleVerifyDocumentsAndDecide}
+                disabled={journeyLoading}
+                className="btn-primary w-full disabled:opacity-60"
+              >
+                {journeyLoading ? "Evaluating Decision..." : "Verify Documents & Get Final Decision"}
+              </button>
+            </div>
+          )}
+
+          {phase === "offer" && finalDecision && preapproval && (
+            <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
+              <h2 className="text-2xl font-bold text-white">Final Loan Decision</h2>
+              <p className="text-lg text-slate-200">Your loan has been <span className="font-semibold">{finalDecision.decision_status}</span></p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08]">
+                  <p className="text-slate-400 text-xs">Final approved amount</p>
+                  <p className="text-white font-semibold">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08]">
+                  <p className="text-slate-400 text-xs">Interest rate</p>
+                  <p className="text-white font-semibold">{finalDecision.interest_rate}%</p>
+                </div>
+                <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08] sm:col-span-2">
+                  <p className="text-slate-400 text-xs">Tenure options</p>
+                  <p className="text-white font-semibold">{(finalDecision.tenure_options || []).join(", ")} months</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-400">Reason: {finalDecision.reason}</p>
+
+              <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                <a
+                  href={`${BACKEND}/api/documents/${sessionIdRef.current}/application/pdf`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-center text-sm text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                >
+                  Download application PDF
+                </a>
+                <Link
+                  href="/dashboard"
+                  className="text-center text-sm text-indigo-300 hover:text-indigo-200 underline underline-offset-2"
+                >
+                  Open applications dashboard
+                </Link>
+                <Link
+                  href="/"
+                  className="text-center text-sm text-slate-400 hover:text-slate-300 underline underline-offset-2"
+                >
+                  Start new session
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {phase === "offer" && offerData && !finalDecision && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <OfferCard
                 status={offerData.status as string}
@@ -947,15 +1239,91 @@ function CallPageInner() {
           )}
         </div>
 
-        {/* Right: Transcript Panel */}
+        {/* Right: Dynamic Stage Panel */}
         <div className="lg:w-[380px] w-full h-[300px] lg:h-auto glass border-t lg:border-t-0 lg:border-l border-white/[0.06]">
-          <TranscriptPanel
-            messages={messages}
-            isListening={isListening}
-            interimText={interimText}
-          />
+          {(phase === "conversation" || phase === "analyzing") && (
+            <TranscriptPanel
+              messages={messages}
+              isListening={isListening}
+              interimText={interimText}
+            />
+          )}
+
+          {phase === "kyc" && preapproval && (
+            <div className="flex h-full flex-col px-4 py-4 gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 2</p>
+                <h3 className="text-lg font-semibold text-white">KYC Verification</h3>
+                <p className="text-sm text-slate-400 mt-1">Identity only. No documents yet.</p>
+              </div>
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
+                <p className="text-xs text-slate-400">Loan type</p>
+                <p className="text-sm text-white font-medium">{currentLoanLabel}</p>
+                <p className="text-xs text-slate-400">Pre-approved amount</p>
+                <p className="text-sm text-white font-medium">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
+                <p className="text-xs text-slate-400">Required next</p>
+                <p className="text-sm text-slate-200">Aadhaar, PAN, selfie</p>
+              </div>
+            </div>
+          )}
+
+          {phase === "documents" && preapproval && (
+            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 3</p>
+                <h3 className="text-lg font-semibold text-white">Document Verification</h3>
+                <p className="text-sm text-slate-400 mt-1">Checklist changes with the loan type.</p>
+              </div>
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
+                <p className="text-xs text-slate-400">Loan type</p>
+                <p className="text-sm text-white font-medium">{currentLoanLabel}</p>
+                <div className="space-y-2 pt-2">
+                  {currentRequiredDocs.map((doc) => (
+                    <div key={doc} className="flex items-start gap-2 text-sm text-slate-200">
+                      <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
+                      <span>{doc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {phase === "offer" && finalDecision && preapproval && (
+            <div className="flex h-full flex-col px-4 py-4 gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 4</p>
+                <h3 className="text-lg font-semibold text-white">Final Decision</h3>
+                <p className="text-sm text-slate-400 mt-1">Decision summary for {currentLoanLabel}.</p>
+              </div>
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
+                <p className="text-xs text-slate-400">Status</p>
+                <p className="text-sm text-white font-medium">{finalDecision.decision_status}</p>
+                <p className="text-xs text-slate-400">Approved amount</p>
+                <p className="text-sm text-white font-medium">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
+                <p className="text-xs text-slate-400">Rate / tenure</p>
+                <p className="text-sm text-white font-medium">{finalDecision.interest_rate}% for {(finalDecision.tenure_options || []).join(", ")} months</p>
+              </div>
+            </div>
+          )}
+
+          {phase === "error" && (
+            <div className="flex h-full items-center justify-center px-6 text-center">
+              <div>
+                <p className="text-lg font-semibold text-white">Flow interrupted</p>
+                <p className="text-sm text-slate-400 mt-2">Please retry from the call start.</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Change 2: RBI Compliance Disclaimer Footer */}
+      <footer className="relative z-10 py-2 px-4 text-center bg-black/40 border-t border-white/[0.06]">
+        <p className="text-[10px] text-slate-500 leading-tight">
+          This V-CIP session is recorded in compliance with RBI Master KYC Direction 2016. Data encrypted and stored securely per RBI guidelines.
+        </p>
+      </footer>
     </main>
   );
 }

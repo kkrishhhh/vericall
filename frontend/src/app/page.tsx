@@ -3,8 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-
-type Language = "en" | "hi" | "mr";
+import { translations } from "@/lib/translations";
+import type { Language } from "@/lib/translations";
 
 const LANGUAGES: { code: Language; label: string; native: string; icon: string }[] = [
   { code: "en", label: "English", native: "English", icon: "🇬🇧" },
@@ -96,6 +96,8 @@ export default function LandingPage() {
     }
   };
 
+  const t = translations[selectedLanguage as Language] || translations.en;
+
   return (
     <main className="relative min-h-screen flex items-center justify-center animated-gradient-bg overflow-hidden">
       {/* Background orbs */}
@@ -125,10 +127,10 @@ export default function LandingPage() {
         {step === "language" && (
           <div className="glass-card p-8">
             <h2 className="text-xl font-semibold text-white mb-2 text-center">
-              Choose Your Language
+              {t.chooseLanguage}
             </h2>
             <p className="text-sm text-slate-400 mb-6 text-center">
-              Select the language you'd like the AI agent to speak in
+              {t.selectLanguageDesc}
             </p>
 
             <div className="grid grid-cols-1 gap-3 mb-6">
@@ -160,7 +162,7 @@ export default function LandingPage() {
               onClick={() => setStep("phone")}
               className="w-full btn-primary flex items-center justify-center gap-3"
             >
-              Continue
+              {t.continueBtn}
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
@@ -172,20 +174,19 @@ export default function LandingPage() {
         {(step === "phone" || step === "otp") && (
           <div className="glass-card p-8">
             <h2 className="text-xl font-semibold text-white mb-2">
-              Start Your Loan Application
+              {t.startLoanApp}
             </h2>
             <p className="text-sm text-slate-400 mb-6">
-              Get pre-approved in under 5 minutes through a live AI video call.
-              No paperwork. No waiting.
+              {t.loanAppDesc}
             </p>
 
             {/* Features */}
             <div className="grid grid-cols-2 gap-3 mb-8">
               {[
-                { icon: "🎥", label: "Live Video KYC" },
-                { icon: "🤖", label: "AI-Powered Agent" },
-                { icon: "⚡", label: "Instant Decision" },
-                { icon: "🔒", label: "Bank-Grade Security" },
+                { icon: "🎥", label: t.liveVideoKyc },
+                { icon: "🤖", label: t.aiAgent },
+                { icon: "⚡", label: t.instantDecision },
+                { icon: "🔒", label: t.bankSecurity },
               ].map((f) => (
                 <div
                   key={f.label}
@@ -202,7 +203,7 @@ export default function LandingPage() {
                 {/* Document Selection */}
                 <div className="mb-4 flex flex-col sm:flex-row gap-4">
                   <div className="sm:w-1/3">
-                    <label className="block text-sm font-medium text-slate-300 mb-2">ID Type</label>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">{t.idType}</label>
                     <select
                       value={docType}
                       onChange={(e) => {
@@ -212,13 +213,13 @@ export default function LandingPage() {
                       }}
                       className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm appearance-none"
                     >
-                      <option value="Aadhaar" className="bg-slate-800">Aadhaar</option>
-                      <option value="PAN" className="bg-slate-800">PAN Card</option>
+                      <option value="Aadhaar" className="bg-slate-800">{t.aadhaar}</option>
+                      <option value="PAN" className="bg-slate-800">{t.panCard}</option>
                     </select>
                   </div>
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                      {docType} Number
+                      {docType === "Aadhaar" ? t.aadhaar : t.panCard} {t.docNumber}
                     </label>
                     <input
                       type="text"
@@ -238,7 +239,7 @@ export default function LandingPage() {
                 {/* Phone Input */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Mobile Number
+                    {t.mobileNumber}
                   </label>
                   <div className="flex">
                     <span className="inline-flex items-center px-4 rounded-l-xl bg-white/[0.05] border border-r-0 border-white/[0.1] text-sm text-slate-400">
@@ -252,7 +253,7 @@ export default function LandingPage() {
                         setPhone(e.target.value.replace(/\D/g, ""));
                         setError("");
                       }}
-                      placeholder="Enter your phone number"
+                      placeholder={t.phonePlaceholder}
                       className="flex-1 px-4 py-3 rounded-r-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm"
                     />
                   </div>
@@ -272,11 +273,11 @@ export default function LandingPage() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
-                      Sending OTP...
+                      {t.sendingOtp}
                     </>
                   ) : (
                     <>
-                      Send OTP to Verify
+                      {t.sendOtpBtn}
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
@@ -289,7 +290,7 @@ export default function LandingPage() {
                   onClick={() => setStep("language")}
                   className="w-full mt-3 text-xs text-slate-500 hover:text-slate-300 transition text-center"
                 >
-                  ← Change language ({LANGUAGES.find((l) => l.code === selectedLanguage)?.native})
+                  ← {t.changeLanguage} ({LANGUAGES.find((l) => l.code === selectedLanguage)?.native})
                 </button>
               </>
             ) : (
@@ -297,7 +298,7 @@ export default function LandingPage() {
                 {/* OTP Input */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Enter 6-Digit Verification Code
+                    {t.enterOtp}
                   </label>
                   <div className="flex">
                     <input
@@ -308,7 +309,7 @@ export default function LandingPage() {
                         setOtp(e.target.value.replace(/\D/g, ""));
                         setError("");
                       }}
-                      placeholder="Enter OTP (Check Python console)"
+                      placeholder={t.otpPlaceholder}
                       className="flex-1 w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 text-center tracking-[0.5em] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-lg"
                     />
                   </div>
@@ -317,10 +318,10 @@ export default function LandingPage() {
 
                   <div className="flex justify-between mt-3 text-xs">
                     <button onClick={() => setStep("phone")} className="text-slate-400 hover:text-white transition">
-                      Change details
+                      {t.changeDetails}
                     </button>
                     <button onClick={handleSendOtp} className="text-indigo-400 hover:text-indigo-300 transition">
-                      Resend code
+                      {t.resendCode}
                     </button>
                   </div>
                 </div>
@@ -337,11 +338,11 @@ export default function LandingPage() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
-                      Verifying...
+                      {t.verifying}
                     </>
                   ) : (
                     <>
-                      Verify & Start Session
+                      {t.verifyStartBtn}
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
@@ -357,23 +358,23 @@ export default function LandingPage() {
                 <svg className="w-3.5 h-3.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
-                RBI Compliant
+                {t.rbiCompliant}
               </span>
               <span>•</span>
-              <span>End-to-End Encrypted</span>
+              <span>{t.endToEndEncrypted}</span>
               <span>•</span>
-              <span>₹0 Application Fee</span>
+              <span>{t.zeroAppFee}</span>
             </div>
           </div>
         )}
 
         {/* Footer */}
         <p className="text-center text-xs text-slate-600 mt-8">
-          © 2026 VeriCall by TenzorX · Poonawalla Fincorp Hackathon
+          {t.footerText}
         </p>
         <p className="text-center mt-3">
           <Link href="/dashboard" className="text-xs text-indigo-400 hover:text-indigo-300 underline underline-offset-2">
-            Applications dashboard
+            {t.appDashboard}
           </Link>
         </p>
       </div>

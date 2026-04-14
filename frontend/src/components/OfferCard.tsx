@@ -44,6 +44,7 @@ interface OfferCardProps {
     employment?: string;
     consent_captured?: boolean;
     no_fraud_flags?: boolean;
+    liveness_passed?: boolean;
   };
   onClose?: () => void;
 }
@@ -111,6 +112,12 @@ export default function OfferCard({
             : "No face / age from video",
       verified: v.age_verified || false,
       icon: "👤",
+    },
+    {
+      label: "Liveness Check",
+      value: v.liveness_passed ? "PASSED — emotion detected" : "FAILED — no liveness signal",
+      verified: v.liveness_passed || false,
+      icon: "🧬",
     },
     {
       label: "Location",

@@ -24,6 +24,8 @@ def _empty_result() -> dict[str, Any]:
         "age_match_score": 0.0,
         "looks_consistent_with_claim": None,
         "verification_message": "",
+        "dominant_emotion": None,
+        "liveness_passed": False,
     }
 
 
@@ -45,8 +47,8 @@ def _analyze_single_frame(image_base64: str) -> dict[str, Any]:
         try:
             results = _DeepFace.analyze(
                 img_path=tmp_path,
-                actions=["age"],
-                detector_backend="opencv",
+                actions=["age", "emotion"],
+                detector_backend="retinaface",
                 enforce_detection=False,
                 silent=True,
             )
@@ -58,20 +60,24 @@ def _analyze_single_frame(image_base64: str) -> dict[str, Any]:
                 corrected_age = raw_age - 6 if raw_age < 35 else raw_age - 3
                 corrected_age = max(1, corrected_age)  # clamp to at least 1
                 face_confidence = float(result.get("face_confidence", 0.85))
+                dominant_emotion = str(result.get("dominant_emotion", "neutral")).lower()
+                liveness_passed = dominant_emotion not in ("neutral", "none", "")
                 return {
                     "estimated_age": corrected_age,
                     "confidence": round(face_confidence, 2),
                     "face_detected": True,
+                    "dominant_emotion": dominant_emotion,
+                    "liveness_passed": liveness_passed,
                 }
-            return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False}
+            return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False, "dominant_emotion": None, "liveness_passed": False}
         finally:
             os.unlink(tmp_path)
 
     except Exception as e:
         error_msg = str(e).lower()
         if "face" in error_msg and ("not" in error_msg or "could" in error_msg):
-            return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False}
-        return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False}
+            return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False, "dominant_emotion": None, "liveness_passed": False}
+        return {"estimated_age": 0.0, "confidence": 0.0, "face_detected": False, "dominant_emotion": None, "liveness_passed": False}
 
 
 def analyze_face(
@@ -96,11 +102,16 @@ def analyze_face(
 
     ages: list[float] = []
     confidences: list[float] = []
+    emotions: list[str] = []
+    liveness_votes: list[bool] = []
     for fb in frames:
         one = _analyze_single_frame(fb)
         if one.get("face_detected"):
             ages.append(float(one["estimated_age"]))
             confidences.append(float(one["confidence"]))
+            if one.get("dominant_emotion"):
+                emotions.append(str(one["dominant_emotion"]))
+            liveness_votes.append(bool(one.get("liveness_passed", False)))
 
     if not ages:
         out = _empty_result()
@@ -110,6 +121,9 @@ def analyze_face(
 
     median_age = float(statistics.median(ages))
     mean_conf = sum(confidences) / len(confidences)
+    # Liveness passes if at least one frame showed a non-neutral emotion
+    liveness_passed = any(liveness_votes)
+    dominant_emotion = emotions[0] if emotions else "neutral"
 
     out: dict[str, Any] = {
         "estimated_age": median_age,
@@ -120,6 +134,8 @@ def analyze_face(
         "age_match_score": 0.0,
         "looks_consistent_with_claim": None,
         "verification_message": f"Estimated age ~{median_age:.0f} yrs from {len(ages)} frame(s).",
+        "dominant_emotion": dominant_emotion,
+        "liveness_passed": liveness_passed,
     }
 
     if declared_age is not None and declared_age > 0:

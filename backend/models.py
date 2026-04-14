@@ -218,3 +218,78 @@ class VerifyAddressResponse(BaseModel):
     city_match: Optional[bool] = Field(None, description="True if geolocation city matches proof city")
     aadhaar_photo_base64: Optional[str] = Field(None, description="Extracted Aadhaar profile photo as data URL")
     extracted: dict = Field(default_factory=dict, description="Raw extracted fields by document")
+
+
+# ── NBFC Loan Journey Models ────────────────────────────────
+
+class InterviewProfileRequest(BaseModel):
+    name: str = ""
+    employment_type: str = ""
+    monthly_income: float = 0
+    loan_type: str = "personal"
+    requested_loan_amount: float = 0
+    declared_age: Optional[int] = 0
+
+
+class InterviewPreapprovalResponse(BaseModel):
+    name: str
+    employment_type: str
+    monthly_income: float
+    loan_type: str
+    requested_loan_amount: float
+    declared_age: int = 0
+    eligible_min: float
+    eligible_max: float
+    eligible_amount: float
+    message: str
+
+
+class KycVerifyRequest(BaseModel):
+    aadhaar_number: str
+    pan_number: str
+    selfie_image: Optional[str] = None
+    declared_age: Optional[int] = None
+    face_estimated_age: Optional[float] = None
+
+
+class KycVerifyResponse(BaseModel):
+    kyc_status: str
+    aadhaar_valid: bool = False
+    pan_valid: bool = False
+    selfie_captured: bool = False
+    face_match_score: float = 0.0
+    risk_flag: str = "LOW_RISK"
+
+
+class DocumentRequirementsResponse(BaseModel):
+    loan_type: str
+    required_documents: list[str] = Field(default_factory=list)
+
+
+class DocumentVerifyRequest(BaseModel):
+    loan_type: str
+    required_documents: list[str] = Field(default_factory=list)
+    uploaded_documents: list[str] = Field(default_factory=list)
+
+
+class DocumentVerifyResponse(BaseModel):
+    document_status: str
+    missing_documents: list[str] = Field(default_factory=list)
+
+
+class DecisionRequest(BaseModel):
+    income: float
+    requested_amount: float
+    eligible_amount: float
+    kyc_status: str
+    document_status: str
+    risk_flag: Optional[str] = "LOW_RISK"
+
+
+class DecisionResponse(BaseModel):
+    decision_status: str
+    final_approved_amount: float
+    interest_rate: float
+    tenure_options: list[int] = Field(default_factory=list)
+    reason: str = ""
+    risk_flag: str = "LOW_RISK"

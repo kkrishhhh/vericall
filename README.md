@@ -1,143 +1,105 @@
-# VeriCall — AI Video Loan Origination
+# VeriCall — Agentic AI Video KYC & Multi-Stage Loan Origination System
 
-> Agentic AI-powered video call onboarding system for Poonawalla Fincorp  
-> Built for TenzorX 2026 National AI Hackathon
+## 🚀 Project Overview
+VeriCall is a state-of-the-art, fully autonomous, multilingual AI loan origination and KYC platform built for the **Poonawalla Fincorp TenzorX Hackathon**. 
 
-## What It Does
-
-A customer opens a link → joins a live video call → an AI agent guides them through a 5-question loan application → the system analyzes their face, voice, and location → a personalized loan offer card appears on screen. **All in under 5 minutes.**
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    FRONTEND (Next.js)                    │
-│  Landing Page → Video Call → Transcript → Offer Card    │
-│  Daily.co WebRTC │ Deepgram STT │ Framer Motion         │
-└──────────────────────┬──────────────────────────────────┘
-                       │ REST API
-┌──────────────────────┴──────────────────────────────────┐
-│                   BACKEND (FastAPI)                      │
-│  /api/agent         │ Groq LLM (Llama 3.3 70B)          │
-│  /api/analyze-face  │ DeepFace age estimation            │
-│  /api/assess-risk   │ Risk + fake bureau + propensity    │
-│  /api/generate-offer│ Policy engine + explainable offer  │
-│  /api/log-session   │ Structured session audit (SQLite)  │
-│  /api/create-room   │ Daily.co room management           │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS |
-| Video | Daily.co WebRTC |
-| Speech-to-Text | Deepgram Nova-2 (real-time streaming) |
-| LLM Agent | Groq API (Llama 3.3 70B) |
-| Age Detection | DeepFace (runs locally, no API key) |
-| Geolocation | Browser Geolocation API |
-| Backend | Python FastAPI + Pydantic |
-| Persistence | SQLite audit repository (+ JSONL fallback) |
-| Animations | Framer Motion |
-
-## Quick Start
-
-### Prerequisites
-- Node.js 18+
-- Python 3.11+
-- API keys: Daily.co, Deepgram, Groq
-
-### 1. Clone & Setup
-```bash
-git clone https://github.com/kkrishhhh/vericall.git
-cd vericall
-```
-
-### 2. Environment Variables
-Create `.env` in the project root:
-```
-DAILY_API_KEY=your_daily_co_api_key
-DEEPGRAM_API_KEY=your_deepgram_api_key
-GROQ_API_KEY=your_groq_api_key
-AUDIT_WRITE_JSONL_COPY=false
-```
-
-Create `frontend/.env.local`:
-```
-NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000
-NEXT_PUBLIC_DEEPGRAM_API_KEY=your_deepgram_api_key
-NEXT_PUBLIC_DAILY_API_KEY=your_daily_co_api_key
-```
-
-### 3. Backend
-```bash
-cd backend
-python -m venv venv
-.\venv\Scripts\activate  # Windows
-pip install -r requirements.txt
-python main.py
-```
-Backend runs at `http://127.0.0.1:8000`
-
-### 4. Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Frontend runs at `http://localhost:3000`
-
-## Demo Flow
-
-1. Open landing page → enter phone number → click "Start Application"
-2. Camera + mic permissions → video call begins
-3. AI agent greets: *"Hi! I'm VeriCall, your digital loan assistant"*
-4. Answer 5 questions: name, age, income, employment, loan purpose
-5. Live transcript appears in real-time sidebar
-6. Age verification runs silently via webcam snapshot
-7. Location verified via browser GPS
-8. **Animated offer card appears**: PRE-APPROVED — ₹3,50,000 at 12.5% — EMI ₹11,720
-9. Confidence score: 0.84 — all fraud checks passed
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/agent` | POST | LLM conversation — accepts transcript, returns next question |
-| `/api/analyze-face` | POST | DeepFace age estimation from base64 image |
-| `/api/assess-risk` | POST | Multi-signal fraud detection |
-| `/api/generate-offer` | POST | Policy engine → personalized loan offer with explainability |
-| `/api/create-room` | POST | Create Daily.co video call room |
-| `/api/deepgram-token` | GET | Deepgram API key for frontend STT |
-| `/api/log-session` | POST | Persist structured session audit payload |
-| `/api/audit/recent` | GET | Read recent sessions from SQLite audit log |
-| `/api/documents/latest` | GET | Generate auto-filled document pack from latest session |
-| `/api/documents/{session_id}` | GET | Generate auto-filled document pack for a session |
-| `/api/documents/latest/application/html` | GET | Render PDF-ready HTML application form from latest session |
-| `/api/documents/{session_id}/application/html` | GET | Render PDF-ready HTML application form by session |
-| `/api/documents/latest/application/pdf` | GET | Download application form as PDF from latest session |
-| `/api/documents/{session_id}/application/pdf` | GET | Download application form as PDF by session |
-
-## Fraud Detection Signals
-
-- **Age mismatch**: DeepFace estimate vs declared age (>8 year threshold)
-- **Location spoofing**: GPS vs India bounding box
-- **Income inconsistency**: LLM detects logical conflicts
-- **Consent verification**: Explicit verbal consent required
-- **Age eligibility**: 21–55 years
-
-## Decision Intelligence
-
-- **Mock bureau adapter**: deterministic bureau score + tradeline summary (`mock_bureau_v1`)
-- **Propensity model**: transparent formula (`propensity_formula_v1`) with factor contributions
-- **Explainable output**: risk and offer responses include reason codes and decision trace
-- **Structured session schema**: campaign/lead IDs, model versions, decision trace, and audit metadata
-
-## Team
-
-**TenzorX** — Built by Krishna Thakur
+It replaces the traditional paperwork-heavy loan onboarding process with a dynamic, real-time video conversation guided by a Large Language Model (Groq Llama-3 70B). The system interviews the customer, captures their face for deep-learning age verification, generates a dynamic checklist of required documents based on the specific loan type, and then pushes the data into a simulated risk engine to formulate a live, personalized "Approved" or "Rejected" loan decision within minutes.
 
 ---
 
-*© 2026 VeriCall · Poonawalla Fincorp Hackathon · All decisions are pre-qualifications only*
+## 🛠️ The Tech Stack
+
+### 🎨 Frontend (Client-side)
+- **Framework:** Next.js 15 (App Router), React 19, TypeScript
+- **Styling:** Tailwind CSS (Native glassmorphism, animated gradients, fully responsive)
+- **Real-Time Speech-to-Text (STT):** Deepgram WebSockets
+- **Real-Time Text-to-Speech (TTS):** Native Web Speech API (`SpeechSynthesisUtterance`)
+- **Video Capture:** Native HTML5 `<video>` and `<canvas>` APIs for live stream rendering and base64 temporal frame extraction.
+
+### ⚙️ Backend (Server-side)
+- **Framework:** FastAPI (Python), Uvicorn
+- **LLM Pipeline / Intelligence:** Groq API running `llama-3.3-70b-versatile`
+- **Computer Vision:** DeepFace (`retinaface` backend for high-precision face/age alignment and proxy-fraud detection)
+- **Data Engineering:** Pydantic models handling exhaustive state machine tracking and validation.
+- **Reporting:** ReportLab (Dynamic PDF generation)
+
+---
+
+## 🎯 Core Features & System Capabilities
+
+### 1. 🌍 Full Multilingual Experience
+- A 100% natively localized experience in **English**, **Hindi (हिंदी)**, and **Marathi (मराठी)**.
+- **Dynamic NLP Prompting:** The chosen language binds fundamentally to the Groq agent's core instructions—the AI natively replies in the language the user sets.
+- **Voice Maps:** TTS appropriately synthesizes `hi-IN` and `mr-IN` accents and vocal packs instead of mispronouncing Hindi logic using an English default configuration.
+
+### 2. 🤖 Interactive Conversational Profiling
+- Real-time Deepgram STT channels transcript blocks to the Llama-3 brain dynamically every 8 seconds.
+- The LLM orchestrates context and gracefully seeks unfulfilled required details: `Name`, `Age`, `Income`, `Employment`, and `Loan Purpose`.
+- On completion, an Extraction pipeline flattens the conversational prose cleanly into a defined, analyzable JSON payload.
+
+### 3. 🛡️ Advanced Age & Identity Verification (DeepFace)
+Instead of trusting the user blindly, the UI triggers a camera stabilization sequence.
+- Extracts optimized base64 visual frames.
+- Analyzes via the `retinaface` computer vision layer precisely predicting the user's age.
+- Employs bias correction (`-6` or `-3` year mathematical corrections).
+- Issues an automatic **Fraud Matrix** tag if the visual age drifts **>12 years** from the stated identity limits.
+
+### 4. 🗂️ The Comprehensive "Loan Journey" System
+The backend utilizes a fully modular `loan_journey.py` state machine driving four dynamic phases dynamically exposed onto a sleek right-side UI panel:
+- **Phase 1: Pre-Approval Profiling.** Evaluates basic text inputs immediately resolving maximum boundaries.
+- **Phase 2: KYC Check.** Executes mock Identity checks against self-attested Aadhaar & PAN hashes, yielding a Risk flag.
+- **Phase 3: Dynamic Document Generation.** Based on the `loan_type` identified (e.g., *Personal Loan* vs *Commercial Vehicle* vs *Medical Equipment*), the system pushes unique document checklist matrices strictly enforcing NBFC standards (e.g. demanding Registration Certificates for Professional loans).
+- **Phase 4: Final Risk Decisioning.** Computes the final verification inputs and either issues an **APPROVED**, **HOLD**, or **REJECTED** state with the definitive computed Limit, Interest rate modifiers (e.g., mapping -0.5% cuts for distinct income tiers), and structured tenure spans securely. 
+
+---
+
+## 🔄 The Complete End-to-End Onboarding Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend (Next.js)
+    participant Agent API (Groq)
+    participant AI Vision (DeepFace)
+    participant Journey Engine (Python)
+    
+    User->>Frontend (Next.js): Chooses Setup (Lang + SMS Auth)
+    note over Frontend (Next.js): User initializes real-time video session
+    
+    loop Real-Time Speech Telemetry
+        Frontend (Next.js)->>Agent API (Groq): Transmits Deepgram Transcripts
+        Agent API (Groq)-->>Frontend (Next.js): Voice Replies / Queries Limits
+    end
+    
+    note over Frontend (Next.js): Step 1: Profiling Concludes
+    Frontend (Next.js)->>Journey Engine (Python): Calls /extract + /preapproval
+    
+    note over Frontend (Next.js): Step 2: KYC & Vision Auth
+    Frontend (Next.js)->>AI Vision (DeepFace): Uploads Frame Array for Age Estimation
+    AI Vision (DeepFace)-->>Journey Engine (Python): Calculates Fraud Match Deltas
+    Journey Engine (Python)-->>Frontend (Next.js): Resolves Identity status
+    
+    note over Frontend (Next.js): Step 3: Dynamic Document Mapping
+    Frontend (Next.js)->>Journey Engine (Python): Calls /documents logic (Requires specific PDFs)
+    Journey Engine (Python)-->>Frontend (Next.js): User completes mock Checklist Uploads
+    
+    note over Frontend (Next.js): Step 4: Final Output
+    Frontend (Next.js)->>Journey Engine (Python): Calls /decision
+    Journey Engine (Python)-->>Frontend (Next.js): Final Approved Constraints (Rate, Output Limits, Tenures)
+    Frontend (Next.js)->>User: Downloads Verified Application PDF!
+```
+
+---
+
+## 🗂️ Core Architecture & Directory Layout
+
+### [Frontend (`frontend/`)]
+- `src/app/page.tsx`: Initial gateway gate (Language logic, PAN auth, mock OTP router endpoints).
+- `src/app/call/page.tsx`: The primary interaction room. Handles WebSockets, video bindings, the Conversational layer orchestrations, and uniquely rendering the 4 distinct Multi-Phase interactive side panels dynamically based on where the user rests in the Journey Engine.
+- `src/components/OfferCard.tsx`: Exquisite presentation logic rendering final approval outcomes.
+
+### [Backend (`backend/`)]
+- `main.py`: Complete FastAPI framework connecting endpoints: `/api/agent`, `/api/extract`, `/api/analyze-face`, `/api/journey/kyc`, `/api/journey/documents`, and `/api/journey/decision`.
+- `services/loan_journey.py`: State-machine defining strict rules, dynamically assigning checklists for generic + specialized assets, computing pre-approval matrix limits based strictly on categorical employment arrays.
+- `agent.py`: Houses the context integration and Llama-3 70B instructions.
+- `vision.py` & `age_verification.py`: Mathematical bindings mapping `retinaface` analytics into robust fraud thresholds securely.
