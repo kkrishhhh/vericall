@@ -17,6 +17,10 @@ from models import (
     SessionAuditPayload, SessionAuditResponse,
     ExtractRequest, ExtractedProfile,
     SendOTPRequest, VerifyOTPRequest,
+    InterviewProfileRequest, InterviewPreapprovalResponse,
+    KycVerifyRequest, KycVerifyResponse,
+    DocumentRequirementsResponse, DocumentVerifyRequest, DocumentVerifyResponse,
+    DecisionRequest, DecisionResponse,
 )
 from agent import run_agent
 from vision import analyze_face
@@ -27,6 +31,13 @@ from extraction import extract_profile_from_text
 from services.document_builder import build_document_pack
 from services.document_templates import render_application_form_html
 from services.document_pdf import render_application_form_pdf
+from services.loan_journey import (
+    compute_preapproval,
+    verify_kyc,
+    get_required_documents,
+    verify_documents,
+    evaluate_decision,
+)
 
 # Load env from project root
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -208,6 +219,12 @@ async def documents_latest():
     return build_document_pack(sessions[0])
 
 
+@app.get("/api/documents/requirements", response_model=DocumentRequirementsResponse)
+async def document_requirements(loan_type: str = "personal"):
+    required = get_required_documents(loan_type)
+    return DocumentRequirementsResponse(loan_type=loan_type, required_documents=required)
+
+
 @app.get("/api/documents/{session_id}")
 async def documents_by_session(session_id: str):
     """Build auto-filled document payloads from a specific session_id."""
@@ -350,6 +367,34 @@ async def verify_otp(req: VerifyOTPRequest):
         return {"status": "success", "message": "KYC Verified Successfully"}
         
     raise HTTPException(status_code=400, detail="Invalid OTP")
+
+
+# ── 10. NBFC Modular Loan Journey ───────────────────────────
+
+@app.post("/api/interview/preapprove", response_model=InterviewPreapprovalResponse)
+async def interview_preapprove(req: InterviewProfileRequest):
+    out = compute_preapproval(req.model_dump())
+    print("[INTERVIEW_LOG]", out)
+    return InterviewPreapprovalResponse(**out)
+
+
+@app.post("/api/kyc/verify-identity", response_model=KycVerifyResponse)
+async def kyc_verify_identity(req: KycVerifyRequest):
+    out = verify_kyc(req.model_dump())
+    print("[KYC_LOG]", out)
+    return KycVerifyResponse(**out)
+@app.post("/api/documents/verify", response_model=DocumentVerifyResponse)
+async def documents_verify(req: DocumentVerifyRequest):
+    required = req.required_documents or get_required_documents(req.loan_type)
+    out = verify_documents(required, req.uploaded_documents)
+    return DocumentVerifyResponse(**out)
+
+
+@app.post("/api/decision/evaluate", response_model=DecisionResponse)
+async def decision_evaluate(req: DecisionRequest):
+    out = evaluate_decision(req.model_dump())
+    print("[DECISION_LOG]", out)
+    return DecisionResponse(**out)
 
 
 if __name__ == "__main__":
