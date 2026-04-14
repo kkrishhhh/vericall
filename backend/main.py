@@ -363,7 +363,13 @@ async def verify_address_endpoint(req: VerifyAddressRequest):
     Uses Groq Vision to extract both addresses and semantic-match them.
     """
     try:
-        result = verify_address_match(req.aadhaar_image, req.pan_image, req.address_proof_image)
+        result = verify_address_match(
+            req.aadhaar_image,
+            req.pan_image,
+            req.address_proof_image,
+            req.latitude,
+            req.longitude,
+        )
         return VerifyAddressResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Address verification failed: {str(e)}")

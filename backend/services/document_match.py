@@ -3,6 +3,7 @@
 import os
 import re
 import json
+import httpx
 from groq import Groq
 
 # Reuse Groq API Key
@@ -81,6 +82,40 @@ def _field_consistent(values: list[str]) -> bool:
     return len(set(normalized)) == 1
 
 
+def _norm_city(s: str | None) -> str:
+    return re.sub(r"[^A-Z]", "", _norm_text(s))
+
+
+def _reverse_geocode_city(latitude: float | None, longitude: float | None) -> str | None:
+    if latitude is None or longitude is None:
+        return None
+    try:
+        with httpx.Client(timeout=6.0) as client_http:
+            res = client_http.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={
+                    "format": "jsonv2",
+                    "lat": latitude,
+                    "lon": longitude,
+                    "zoom": 10,
+                    "addressdetails": 1,
+                },
+                headers={"User-Agent": "vericall-kyc/1.0"},
+            )
+        if not res.is_success:
+            return None
+        address = (res.json() or {}).get("address") or {}
+        return (
+            address.get("city")
+            or address.get("town")
+            or address.get("village")
+            or address.get("county")
+            or None
+        )
+    except Exception:
+        return None
+
+
 def _verhoeff_validate(num: str) -> bool:
     c = 0
     rev = list(map(int, reversed(num)))
@@ -107,7 +142,13 @@ def _is_valid_pan(number: str | None) -> bool:
     return _PAN_RE.fullmatch(compact) is not None
 
 
-def verify_address_match(aadhaar_b64: str, pan_b64: str, proof_b64: str) -> dict:
+def verify_address_match(
+    aadhaar_b64: str,
+    pan_b64: str,
+    proof_b64: str,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> dict:
     """Extract identity fields across docs and validate address/id consistency."""
     prompt = """You are a strict KYC document checker.
 You will get 3 images in this exact order:
@@ -126,7 +167,7 @@ JSON schema:
 {
   "aadhaar": {"name": "...", "dob": "...", "gender": "...", "blood_group": "...", "aadhaar_number": "...", "address": "..."},
   "pan": {"name": "...", "dob": "...", "gender": "...", "pan_number": "..."},
-  "address_proof": {"name": "...", "dob": "...", "gender": "...", "blood_group": "...", "address": "..."},
+  "address_proof": {"name": "...", "dob": "...", "gender": "...", "blood_group": "...", "address": "...", "city": "..."},
   "address_match": true,
   "address_reason": "short reason"
 }
@@ -187,6 +228,11 @@ Use null for unknown fields."""
 
         address_match = bool(data.get("address_match"))
         address_reason = str(data.get("address_reason") or "").strip() or "Address match status unavailable."
+        proof_city = address_proof.get("city")
+        geo_city = _reverse_geocode_city(latitude, longitude)
+        city_match: bool | None = None
+        if proof_city and geo_city:
+            city_match = _norm_city(proof_city) == _norm_city(geo_city)
 
         overall_ok = all([
             address_match,
@@ -195,6 +241,7 @@ Use null for unknown fields."""
             gender_match,
             aadhaar_number_valid,
             pan_number_valid,
+            city_match is not False,
         ])
         failed_checks = []
         if not address_match:
@@ -209,6 +256,8 @@ Use null for unknown fields."""
             failed_checks.append("invalid Aadhaar number")
         if not pan_number_valid:
             failed_checks.append("invalid PAN number")
+        if city_match is False:
+            failed_checks.append("current location city does not match address proof city")
 
         reason = "All document checks passed."
         if failed_checks:
@@ -225,12 +274,20 @@ Use null for unknown fields."""
             "aadhaar_number_valid": aadhaar_number_valid,
             "pan_number_valid": pan_number_valid,
             "blood_group": blood_group,
+            "proof_city": proof_city,
+            "geo_city": geo_city,
+            "city_match": city_match,
             "extracted": {
                 "aadhaar": aadhaar,
                 "pan": pan,
                 "address_proof": address_proof,
                 "address_match": address_match,
                 "address_reason": address_reason,
+                "geo": {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "geo_city": geo_city,
+                },
             },
         }
 
@@ -253,5 +310,8 @@ Use null for unknown fields."""
             "aadhaar_number_valid": False,
             "pan_number_valid": False,
             "blood_group": None,
+            "proof_city": None,
+            "geo_city": None,
+            "city_match": None,
             "extracted": {},
         }

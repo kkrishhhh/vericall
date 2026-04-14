@@ -61,6 +61,9 @@ function CallPageInner() {
     aadhaar_number_valid?: boolean;
     pan_number_valid?: boolean;
     blood_group?: string | null;
+    proof_city?: string | null;
+    geo_city?: string | null;
+    city_match?: boolean | null;
   } | null>(null);
   const [addressCheckError, setAddressCheckError] = useState("");
   const messagesRef = useRef<Message[]>([]);
@@ -565,6 +568,8 @@ function CallPageInner() {
           aadhaar_image: aadhaarImage,
           pan_image: panImage,
           address_proof_image: addressProofImage,
+          latitude: locationData?.latitude ?? null,
+          longitude: locationData?.longitude ?? null,
         }),
       });
 
@@ -587,8 +592,26 @@ function CallPageInner() {
         aadhaar_number_valid?: boolean;
         pan_number_valid?: boolean;
         blood_group?: string | null;
+        proof_city?: string | null;
+        geo_city?: string | null;
+        city_match?: boolean | null;
       };
       setAddressCheck(verifyData);
+      try {
+        sessionStorage.setItem(
+          "vericall_last_geo_check",
+          JSON.stringify({
+            latitude: locationData?.latitude ?? null,
+            longitude: locationData?.longitude ?? null,
+            geo_city: verifyData.geo_city ?? null,
+            proof_city: verifyData.proof_city ?? null,
+            city_match: verifyData.city_match ?? null,
+            at: new Date().toISOString(),
+          }),
+        );
+      } catch {
+        /* ignore */
+      }
 
       if (verifyData.matches) {
         setPhase("offer");
@@ -810,6 +833,14 @@ function CallPageInner() {
                     </p>
                     {addressCheck.blood_group && (
                       <p className="mt-1 text-xs opacity-90">Blood Group: {addressCheck.blood_group}</p>
+                    )}
+                    {(addressCheck.proof_city || addressCheck.geo_city) && (
+                      <p className="mt-1 text-xs opacity-90">
+                        Proof city: {addressCheck.proof_city || "N/A"} · Current city: {addressCheck.geo_city || "N/A"} ·
+                        {" "}
+                        City check:{" "}
+                        {addressCheck.city_match == null ? "not available" : addressCheck.city_match ? "match" : "mismatch"}
+                      </p>
                     )}
                   </div>
                 )}

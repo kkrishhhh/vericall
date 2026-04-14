@@ -199,6 +199,8 @@ class VerifyAddressRequest(BaseModel):
     aadhaar_image: str = Field(..., description="Base64 encoded string of the Aadhaar Card image")
     pan_image: str = Field(..., description="Base64 encoded string of the PAN card image")
     address_proof_image: str = Field(..., description="Base64 encoded string of the Address Proof image")
+    latitude: Optional[float] = Field(None, description="Current user latitude from browser geolocation")
+    longitude: Optional[float] = Field(None, description="Current user longitude from browser geolocation")
 
 class VerifyAddressResponse(BaseModel):
     aadhaar_address: str = Field(None, description="The formatted Address extracted from Aadhaar Card")
@@ -211,4 +213,7 @@ class VerifyAddressResponse(BaseModel):
     aadhaar_number_valid: bool = Field(False, description="True if Aadhaar number passes format/checksum")
     pan_number_valid: bool = Field(False, description="True if PAN number passes format checks")
     blood_group: Optional[str] = Field(None, description="Blood group if present in any document")
+    proof_city: Optional[str] = Field(None, description="City extracted from address proof")
+    geo_city: Optional[str] = Field(None, description="City resolved from current geolocation")
+    city_match: Optional[bool] = Field(None, description="True if geolocation city matches proof city")
     extracted: dict = Field(default_factory=dict, description="Raw extracted fields by document")
