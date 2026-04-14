@@ -64,6 +64,7 @@ function CallPageInner() {
     proof_city?: string | null;
     geo_city?: string | null;
     city_match?: boolean | null;
+    aadhaar_photo_base64?: string | null;
   } | null>(null);
   const [addressCheckError, setAddressCheckError] = useState("");
   const messagesRef = useRef<Message[]>([]);
@@ -595,6 +596,7 @@ function CallPageInner() {
         proof_city?: string | null;
         geo_city?: string | null;
         city_match?: boolean | null;
+        aadhaar_photo_base64?: string | null;
       };
       setAddressCheck(verifyData);
       try {
@@ -841,6 +843,16 @@ function CallPageInner() {
                         City check:{" "}
                         {addressCheck.city_match == null ? "not available" : addressCheck.city_match ? "match" : "mismatch"}
                       </p>
+                    )}
+                    {addressCheck.aadhaar_photo_base64 && (
+                      <div className="mt-3">
+                        <p className="text-xs opacity-90 mb-2">Extracted Aadhaar photo</p>
+                        <img
+                          src={addressCheck.aadhaar_photo_base64}
+                          alt="Extracted Aadhaar profile"
+                          className="h-20 w-20 rounded-lg object-cover border border-white/20"
+                        />
+                      </div>
                     )}
                   </div>
                 )}

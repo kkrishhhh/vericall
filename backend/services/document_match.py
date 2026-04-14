@@ -3,6 +3,7 @@
 import os
 import re
 import json
+import base64
 import httpx
 from groq import Groq
 
@@ -43,6 +44,56 @@ _VERHOEFF_P = [
 
 def _clean_b64(image_b64: str) -> str:
     return image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+
+
+def _extract_face_crop_from_aadhaar(aadhaar_b64: str) -> str | None:
+    """
+    Extract likely portrait area from Aadhaar using local face detection.
+    Returns a data URL (base64 JPEG) or None.
+    """
+    try:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        image_bytes = base64.b64decode(aadhaar_b64)
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=4,
+            minSize=(30, 30),
+        )
+        if len(faces) == 0:
+            return None
+
+        x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
+        pad = int(max(w, h) * 0.25)
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(image.shape[1], x + w + pad)
+        y2 = min(image.shape[0], y + h + pad)
+        crop = image[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        ok, enc = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        if not ok:
+            return None
+        out_b64 = base64.b64encode(enc.tobytes()).decode("ascii")
+        return f"data:image/jpeg;base64,{out_b64}"
+    except Exception:
+        return None
 
 
 def _norm_text(s: str | None) -> str:
@@ -176,6 +227,7 @@ Use null for unknown fields."""
     aadhaar_b64 = _clean_b64(aadhaar_b64)
     pan_b64 = _clean_b64(pan_b64)
     proof_b64 = _clean_b64(proof_b64)
+    aadhaar_photo_base64 = _extract_face_crop_from_aadhaar(aadhaar_b64)
 
     messages = [{
         "role": "user",
@@ -277,6 +329,7 @@ Use null for unknown fields."""
             "proof_city": proof_city,
             "geo_city": geo_city,
             "city_match": city_match,
+            "aadhaar_photo_base64": aadhaar_photo_base64,
             "extracted": {
                 "aadhaar": aadhaar,
                 "pan": pan,
@@ -313,5 +366,6 @@ Use null for unknown fields."""
             "proof_city": None,
             "geo_city": None,
             "city_match": None,
+            "aadhaar_photo_base64": None,
             "extracted": {},
         }

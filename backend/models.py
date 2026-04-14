@@ -216,4 +216,5 @@ class VerifyAddressResponse(BaseModel):
     proof_city: Optional[str] = Field(None, description="City extracted from address proof")
     geo_city: Optional[str] = Field(None, description="City resolved from current geolocation")
     city_match: Optional[bool] = Field(None, description="True if geolocation city matches proof city")
+    aadhaar_photo_base64: Optional[str] = Field(None, description="Extracted Aadhaar profile photo as data URL")
     extracted: dict = Field(default_factory=dict, description="Raw extracted fields by document")
