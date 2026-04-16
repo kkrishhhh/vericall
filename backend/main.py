@@ -214,6 +214,15 @@ async def audit_recent(limit: int = 20):
     return {"sessions": read_recent_sessions(lim)}
 
 
+@app.get("/api/audit/session/{session_id}")
+async def audit_session_by_id(session_id: str):
+    """Fetch a single session record by ID."""
+    session = read_session_by_id(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
 # ── 8. Auto-filled document generation ──────────────────────
 
 @app.get("/api/documents/latest")

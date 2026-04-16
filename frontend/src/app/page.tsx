@@ -335,9 +335,13 @@ export default function LandingPage() {
         <p className="text-center text-xs text-slate-600 mt-8">
           {t.footerText}
         </p>
-        <p className="text-center mt-3">
+        <p className="text-center mt-3 flex items-center justify-center gap-4">
           <Link href="/dashboard" className="text-xs text-indigo-400 hover:text-indigo-300 underline underline-offset-2">
             {t.appDashboard}
+          </Link>
+          <span className="text-slate-800">•</span>
+          <Link href="/admin" className="text-xs text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-bold focus:outline-none">
+            Admin Portal
           </Link>
         </p>
       </div>
