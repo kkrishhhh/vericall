@@ -12,6 +12,16 @@ const LANGUAGES: { code: Language; label: string; native: string; icon: string }
   { code: "mr", label: "Marathi", native: "मराठी", icon: "🇮🇳" },
 ];
 
+function uniqueUrls(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
 export default function LandingPage() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
@@ -23,8 +33,39 @@ export default function LandingPage() {
   const [selectedLanguage, setSelectedLanguage] = useState<Language>("en");
   const searchParams = useSearchParams();
   const router = useRouter();
+  const configuredBackend = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+  const backendCandidates = uniqueUrls([
+    configuredBackend,
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8000",
+  ]);
+  const [activeBackendUrl, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");
   const campaignId = searchParams.get("campaign_id") || "";
   const campaignLink = searchParams.get("campaign_link") || (campaignId ? `${typeof window !== "undefined" ? window.location.origin : ""}/?campaign_id=${encodeURIComponent(campaignId)}` : "");
+
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const fetchWithBackendFallback = async (path: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    let lastError: unknown = null;
+    for (const baseUrl of backendCandidates) {
+      try {
+        const res = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
+        setActiveBackendUrl(baseUrl);
+        return { res, baseUrl };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Backend not reachable");
+  };
 
   const handleSendOtp = async () => {
     if (phone.length < 10) {
@@ -36,17 +77,23 @@ export default function LandingPage() {
     setLoading(true);
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
-      const res = await fetch(`${backendUrl}/api/send-otp`, {
+      const { res, baseUrl } = await fetchWithBackendFallback("/api/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mobile_number: `+91${phone}` }),
       });
-      if (!res.ok) throw new Error("Failed to send OTP");
-      setSuccessMsg("OTP sent to terminal console for simulation!");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || "Failed to send OTP");
+      }
+      setSuccessMsg(`OTP sent to terminal console for simulation (${baseUrl})!`);
       setStep("otp");
-    } catch {
-      setError("Unable to send OTP. Is the backend running?");
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        setError(`OTP request timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
+      } else {
+        setError(err?.message || `Unable to send OTP. Checked: ${backendCandidates.join(", ")}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -62,8 +109,7 @@ export default function LandingPage() {
     setLoading(true);
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
-      const res = await fetch(`${backendUrl}/api/verify-otp`, {
+      const { res } = await fetchWithBackendFallback("/api/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mobile_number: `+91${phone}`, otp }),
@@ -76,7 +122,11 @@ export default function LandingPage() {
       setLoading(false);
       setStep("consent");
     } catch (err: any) {
-      setError(err.message || "Unable to start session. Please try again.");
+      if (err?.name === "AbortError") {
+        setError(`OTP verification timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
+      } else {
+        setError(err.message || "Unable to start session. Please try again.");
+      }
       setLoading(false);
     }
   };
@@ -90,21 +140,19 @@ export default function LandingPage() {
     setLoading(true);
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
-      
       // We will securely record the consent. Generate a temp session ID for this purpose.
       const sessionId = `s_${Date.now()}`;
       
       await Promise.all([
-        fetch(`${backendUrl}/api/consent/record`, { 
+        fetchWithBackendFallback("/api/consent/record", {
           method: "POST", headers: {"Content-Type":"application/json"}, 
           body: JSON.stringify({ session_id: sessionId, consent_type: "KYC_VERIFICATION", consent_given: true }) 
         }),
-        fetch(`${backendUrl}/api/consent/record`, { 
+        fetchWithBackendFallback("/api/consent/record", {
           method: "POST", headers: {"Content-Type":"application/json"}, 
           body: JSON.stringify({ session_id: sessionId, consent_type: "VIDEO_RECORDING", consent_given: true }) 
         }),
-        fetch(`${backendUrl}/api/consent/record`, { 
+        fetchWithBackendFallback("/api/consent/record", {
           method: "POST", headers: {"Content-Type":"application/json"}, 
           body: JSON.stringify({ session_id: sessionId, consent_type: "DATA_PROCESSING", consent_given: true }) 
         }),
@@ -113,7 +161,7 @@ export default function LandingPage() {
       setSuccessMsg("Consents verified! Starting application...");
 
       // proceed to create room
-      const roomRes = await fetch(`${backendUrl}/api/create-room`, { method: "POST" });
+      const { res: roomRes } = await fetchWithBackendFallback("/api/create-room", { method: "POST" });
       if (!roomRes.ok) throw new Error("Failed to create room");
       const roomData = await roomRes.json();
 
@@ -292,6 +340,7 @@ export default function LandingPage() {
                 >
                   ← {t.changeLanguage} ({LANGUAGES.find((l) => l.code === selectedLanguage)?.native})
                 </button>
+                <p className="text-[11px] text-slate-500 mt-2 text-center">Backend: {activeBackendUrl}</p>
               </>
             )}
             {step === "otp" && (

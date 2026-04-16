@@ -88,6 +88,16 @@ function prettifyLoanType(loanType: string) {
     .trim();
 }
 
+function uniqueUrls(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
 function CallPageInner() {
   const searchParams = useSearchParams();
   const roomUrl = searchParams.get("room") || "";
@@ -180,7 +190,36 @@ function CallPageInner() {
   const initialGreetingRequestedRef = useRef(false);
   const agentRateLimitedUntilRef = useRef<number>(0);
 
-  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+  const configuredBackend = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+  const backendCandidates = uniqueUrls([
+    configuredBackend,
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8000",
+  ]);
+  const BACKEND = backendCandidates[0] || "http://127.0.0.1:8001";
+
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const fetchWithBackendFallback = async (path: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    let lastError: unknown = null;
+    for (const baseUrl of backendCandidates) {
+      try {
+        const res = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
+        return { res, baseUrl };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Backend not reachable");
+  };
 
   const getTimestamp = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   const currentLoanType = preapproval?.loan_type || "personal";
@@ -414,7 +453,7 @@ function CallPageInner() {
       }
 
       const history = conversationHistoryRef.current;
-      const res = await fetch(`${BACKEND}/api/agent`, {
+      const { res } = await fetchWithBackendFallback("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript: text, conversation_history: history, language: lang }),
@@ -496,7 +535,7 @@ function CallPageInner() {
     } catch {
       // silently fail — will retry on next interval
     }
-  }, [BACKEND, handleConversationComplete, lang]);
+  }, [handleConversationComplete, lang]);
 
   // ── 5. Connect Deepgram STT (via sttService) ───────────────
   useEffect(() => {
@@ -507,7 +546,7 @@ function CallPageInner() {
 
     (async () => {
       try {
-        const tokenRes = await fetch(`${BACKEND}/api/deepgram-token`);
+        const { res: tokenRes } = await fetchWithBackendFallback("/api/deepgram-token", {}, 8000);
         if (!tokenRes.ok) {
           setSttStatus("failed");
           return;
@@ -577,7 +616,7 @@ function CallPageInner() {
       sttConnRef.current = null;
       if (agentTimerRef.current) clearInterval(agentTimerRef.current);
     };
-  }, [phase, mediaStream, BACKEND, sendToAgent, lang]);
+  }, [phase, mediaStream, sendToAgent, lang]);
 
   // ── Manual text input fallback ────────────────────────────
   const handleManualSend = () => {
