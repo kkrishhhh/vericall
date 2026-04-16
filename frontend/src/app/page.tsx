@@ -15,7 +15,8 @@ const LANGUAGES: { code: Language; label: string; native: string; icon: string }
 export default function LandingPage() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
-  const [step, setStep] = useState<"language" | "phone" | "otp">("language");
+  const [step, setStep] = useState<"language" | "phone" | "otp" | "consent">("language");
+  const [consents, setConsents] = useState({ kyc: false, video: false, data: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -72,8 +73,44 @@ export default function LandingPage() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.detail || "Invalid OTP");
       }
+      setLoading(false);
+      setStep("consent");
+    } catch (err: any) {
+      setError(err.message || "Unable to start session. Please try again.");
+      setLoading(false);
+    }
+  };
 
-      setSuccessMsg("KYC Verified! Starting application...");
+  const handleConsentSubmit = async () => {
+    if (!consents.kyc || !consents.video || !consents.data) {
+      setError("You must agree to all terms to proceed with the loan application.");
+      return;
+    }
+    setError("");
+    setLoading(true);
+
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+      
+      // We will securely record the consent. Generate a temp session ID for this purpose.
+      const sessionId = `s_${Date.now()}`;
+      
+      await Promise.all([
+        fetch(`${backendUrl}/api/consent/record`, { 
+          method: "POST", headers: {"Content-Type":"application/json"}, 
+          body: JSON.stringify({ session_id: sessionId, consent_type: "KYC_VERIFICATION", consent_given: true }) 
+        }),
+        fetch(`${backendUrl}/api/consent/record`, { 
+          method: "POST", headers: {"Content-Type":"application/json"}, 
+          body: JSON.stringify({ session_id: sessionId, consent_type: "VIDEO_RECORDING", consent_given: true }) 
+        }),
+        fetch(`${backendUrl}/api/consent/record`, { 
+          method: "POST", headers: {"Content-Type":"application/json"}, 
+          body: JSON.stringify({ session_id: sessionId, consent_type: "DATA_PROCESSING", consent_given: true }) 
+        }),
+      ]);
+
+      setSuccessMsg("Consents verified! Starting application...");
 
       // proceed to create room
       const roomRes = await fetch(`${backendUrl}/api/create-room`, { method: "POST" });
@@ -84,7 +121,7 @@ export default function LandingPage() {
         `/call?room=${encodeURIComponent(roomData.room_url)}&phone=${encodeURIComponent(phone)}&lang=${selectedLanguage}${campaignId ? `&campaign_id=${encodeURIComponent(campaignId)}` : ""}${campaignLink ? `&campaign_link=${encodeURIComponent(campaignLink)}` : ""}`,
       );
     } catch (err: any) {
-      setError(err.message || "Unable to start session. Please try again.");
+      setError(err.message || "Failed to start session. Check backend connection.");
       setLoading(false);
     }
   };
@@ -163,8 +200,8 @@ export default function LandingPage() {
           </div>
         )}
 
-        {/* ── KYC Card (Phone + OTP) ── */}
-        {(step === "phone" || step === "otp") && (
+        {/* ── KYC Card (Phone + OTP + Consent) ── */}
+        {(step === "phone" || step === "otp" || step === "consent") && (
           <div className="glass-card p-8">
             <h2 className="text-xl font-semibold text-white mb-2">
               {t.startLoanApp}
@@ -197,7 +234,7 @@ export default function LandingPage() {
               </div>
             )}
 
-            {step === "phone" ? (
+            {step === "phone" && (
               <>
                 {/* Phone Input */}
                 <div className="mb-4">
@@ -256,7 +293,8 @@ export default function LandingPage() {
                   ← {t.changeLanguage} ({LANGUAGES.find((l) => l.code === selectedLanguage)?.native})
                 </button>
               </>
-            ) : (
+            )}
+            {step === "otp" && (
               <>
                 {/* OTP Input */}
                 <div className="mb-4">
@@ -311,6 +349,56 @@ export default function LandingPage() {
                       </svg>
                     </>
                   )}
+                </button>
+              </>
+            )}
+            
+            {step === "consent" && (
+              <>
+                <h3 className="text-white font-medium mb-4 text-center border-b border-white/[0.1] pb-2">Mandatory Data Consents</h3>
+                <div className="space-y-4 mb-6">
+                  <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="pt-1">
+                      <input type="checkbox" className="w-5 h-5 rounded border-slate-500 bg-white/5 checked:bg-indigo-500 focus:ring-indigo-500 transition" 
+                        checked={consents.kyc} onChange={(e) => setConsents({...consents, kyc: e.target.checked})} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-200 group-hover:text-white transition">Identity Verification</p>
+                      <p className="text-xs text-slate-500">I consent to verifying my identity via Aadhaar/PAN based KYC processes.</p>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="pt-1">
+                      <input type="checkbox" className="w-5 h-5 rounded border-slate-500 bg-white/5 checked:bg-indigo-500 focus:ring-indigo-500 transition" 
+                        checked={consents.video} onChange={(e) => setConsents({...consents, video: e.target.checked})} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-200 group-hover:text-white transition">Video Recording Check</p>
+                      <p className="text-xs text-slate-500">I acknowledge that this video call will be recorded and analyzed to detect liveness and authenticity.</p>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="pt-1">
+                      <input type="checkbox" className="w-5 h-5 rounded border-slate-500 bg-white/5 checked:bg-indigo-500 focus:ring-indigo-500 transition" 
+                        checked={consents.data} onChange={(e) => setConsents({...consents, data: e.target.checked})} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-200 group-hover:text-white transition">Data Processing & AI Analysis</p>
+                      <p className="text-xs text-slate-500">I agree to the processing of my data to generate a real-time loan approval decision.</p>
+                    </div>
+                  </label>
+                </div>
+                {error && <p className="text-red-400 text-xs text-center mb-4">{error}</p>}
+                
+                <button
+                  onClick={handleConsentSubmit}
+                  disabled={loading || !consents.kyc || !consents.video || !consents.data}
+                  className="w-full btn-primary flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                >
+                  {loading ? "Starting Call..." : "Accept & Start Call"}
+                  {!loading && <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>}
                 </button>
               </>
             )}

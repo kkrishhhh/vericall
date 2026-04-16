@@ -264,81 +264,7 @@ class PANVerifier:
         )
 
 
-# ── 3. Bank Account Verification (Penny Drop) ───────────────────
 
-class BankAccountVerifier:
-    """Bank account verification via penny drop.
-
-    Production: Use Setu, Razorpay, or Cashfree penny drop API.
-    - Sends ₹1 to the account
-    - Bank returns registered name
-    - Compare name with declared name
-    - Setu sandbox: https://setu.co/payments/account-verification
-    """
-
-    @staticmethod
-    def verify_penny_drop(
-        account_number: str,
-        ifsc_code: str,
-        declared_name: str,
-    ) -> VerificationResult:
-        """Mock penny drop verification.
-
-        In production:
-        1. POST to Setu/Razorpay with account_number + IFSC
-        2. ₹1 transferred and immediately reversed
-        3. Bank returns registered beneficiary name
-        4. Fuzzy match against declared_name
-        """
-        if not account_number or not ifsc_code:
-            return VerificationResult(
-                service="bank_penny_drop",
-                verified=False,
-                confidence=0.0,
-                details={"reason": "Account number and IFSC required"},
-                source="mock",
-            )
-
-        # IFSC format validation (real check)
-        ifsc_valid = bool(re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", ifsc_code.upper()))
-
-        # Mock penny drop result
-        h = hashlib.sha256(f"{account_number}:{ifsc_code}".encode()).hexdigest()
-        mock_score = 0.80 + (int(h[:4], 16) % 20) / 100
-
-        return VerificationResult(
-            service="bank_penny_drop",
-            verified=ifsc_valid,
-            confidence=round(mock_score, 3) if ifsc_valid else 0.0,
-            details={
-                "ifsc_valid": ifsc_valid,
-                "account_masked": f"XXXXX{account_number[-4:]}" if len(account_number) >= 4 else "XXXX",
-                "penny_amount": "₹1.00",
-                "name_match": True if ifsc_valid else False,
-                "bank_name": _ifsc_to_bank(ifsc_code) if ifsc_valid else None,
-                "production_provider": "Setu Account Verification API",
-                "sandbox_url": "https://setu.co/payments/account-verification",
-            },
-            source="mock",
-        )
-
-
-def _ifsc_to_bank(ifsc: str) -> str:
-    """Extract bank name from IFSC prefix (first 4 chars)."""
-    bank_map = {
-        "SBIN": "State Bank of India",
-        "HDFC": "HDFC Bank",
-        "ICIC": "ICICI Bank",
-        "UTIB": "Axis Bank",
-        "KKBK": "Kotak Mahindra Bank",
-        "PUNB": "Punjab National Bank",
-        "BARB": "Bank of Baroda",
-        "CNRB": "Canara Bank",
-        "IOBA": "Indian Overseas Bank",
-        "UBIN": "Union Bank of India",
-    }
-    prefix = ifsc[:4].upper()
-    return bank_map.get(prefix, f"Bank ({prefix})")
 
 
 # ── 4. GST Verification ─────────────────────────────────────────
@@ -462,8 +388,6 @@ async def run_all_verifications(
     aadhaar_number: str | None = None,
     pan_number: str | None = None,
     declared_name: str = "",
-    account_number: str | None = None,
-    ifsc_code: str | None = None,
     gstin: str | None = None,
     qr_data: str | None = None,
 ) -> dict:
@@ -473,8 +397,6 @@ async def run_all_verifications(
         aadhaar_number: 12-digit Aadhaar number
         pan_number: 10-char PAN number
         declared_name: Customer's declared name for cross-matching
-        account_number: Bank account number
-        ifsc_code: IFSC code
         gstin: GST Identification Number (for self-employed)
         qr_data: Extracted Aadhaar QR data string
 
@@ -493,11 +415,6 @@ async def run_all_verifications(
     if pan_number:
         results["pan_format"] = PANVerifier.verify_format(pan_number).model_dump()
         results["pan_name_verify"] = PANVerifier.verify_with_name(pan_number, declared_name).model_dump()
-
-    if account_number and ifsc_code:
-        results["bank_penny_drop"] = BankAccountVerifier.verify_penny_drop(
-            account_number, ifsc_code, declared_name
-        ).model_dump()
 
     if gstin:
         results["gst_format"] = GSTVerifier.verify_format(gstin).model_dump()

@@ -656,58 +656,7 @@ async def verify_registry(req: VerifyRegistryRequest):
     return result
 
 
-# ── 18. DigiLocker Integration (Mock Architecture) ──────────────
-
-@app.post("/api/digilocker/initiate")
-async def digilocker_initiate(session_id: str = ""):
-    """Initiate DigiLocker OAuth flow (mock for hackathon).
-
-    Production flow:
-    1. Redirect user to consent.digilocker.gov.in
-    2. User logs in with Aadhaar OTP
-    3. DigiLocker returns digitally signed Aadhaar XML
-    4. Verify digital signature using UIDAI public key
-    5. Extract and trust the data (guaranteed authentic)
-    """
-    return {
-        "status": "mock",
-        "redirect_url": "https://consent.digilocker.gov.in/auth",
-        "session_id": session_id,
-        "production_flow": [
-            "1. Redirect to DigiLocker OAuth (consent.digilocker.gov.in)",
-            "2. User logs in with Aadhaar OTP",
-            "3. DigiLocker returns signed Aadhaar XML",
-            "4. Verify UIDAI digital signature (RSA public key)",
-            "5. Extract verified data — impossible to fake",
-        ],
-        "partner_registration": "https://digilocker.gov.in/partners",
-        "note": "DigiLocker Partner API registration required. Documents fetched from DigiLocker have digital signatures from issuing authorities — they cannot be faked.",
-    }
-
-
-@app.post("/api/digilocker/callback")
-async def digilocker_callback(code: str = "", session_id: str = ""):
-    """Mock DigiLocker OAuth callback with simulated signed document."""
-    return {
-        "status": "mock_success",
-        "session_id": session_id,
-        "document_type": "aadhaar",
-        "digitally_signed": True,
-        "issuer": "UIDAI",
-        "signature_verified": True,
-        "extracted_data": {
-            "name": "Demo User",
-            "dob": "01/01/1990",
-            "gender": "M",
-            "aadhaar_last_4": "1234",
-            "address": "Demo Address, City, State - 400001",
-            "photo_available": True,
-        },
-        "authenticity": "GUARANTEED — Document fetched directly from issuing authority via DigiLocker",
-    }
-
-
-# ── 19. Document Forensics Endpoint ─────────────────────────────
+# ── 18. Document Forensics Endpoint ─────────────────────────────
 
 from services.document_match import check_document_forensics
 
