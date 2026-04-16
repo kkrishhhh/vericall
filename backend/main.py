@@ -4,7 +4,7 @@ import os
 import time
 import logging
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -44,6 +44,24 @@ from services.journey_core import (
     verify_kyc,
     evaluate_decision,
 )
+from services.consent_manager import (
+    ConsentRecord, RecordConsentRequest,
+    store_consent, get_consent_by_session,
+)
+from services.human_review_queue import (
+    HumanReviewItem, EscalateRequest, ResolveRequest,
+    escalate_to_review, get_review_queue, resolve_review,
+    check_and_escalate, ESCALATION_TRIGGERS,
+)
+from rbac import (
+    Role, LoginRequest, LoginResponse,
+    authenticate_user, require_role, get_current_user,
+)
+from services.analytics import (
+    get_overview_stats, get_fraud_stats,
+    get_regional_breakdown, get_ai_performance_metrics,
+)
+
 
 # Load env from project root
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -208,8 +226,8 @@ async def log_session_endpoint(payload: SessionAuditPayload):
 
 
 @app.get("/api/audit/recent")
-async def audit_recent(limit: int = 20):
-    """Recent sessions for dashboard (newest first)."""
+async def audit_recent(limit: int = 20, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
+    """Recent sessions for dashboard (newest first). Requires PFL_OFFICER+."""
     lim = max(1, min(limit, 100))
     return {"sessions": read_recent_sessions(lim)}
 
@@ -475,6 +493,224 @@ async def orchestrate_endpoint(req: OrchestrateRequest):
             status_code=500,
             detail=f"Orchestration failed: {str(e)}",
         )
+
+
+# ── 12. DPDPA Consent Management ─────────────────────────────────
+
+@app.post("/api/consent/record")
+async def record_consent(req: RecordConsentRequest):
+    """Record a granular consent entry (DPDPA compliance)."""
+    try:
+        record = ConsentRecord(
+            session_id=req.session_id,
+            phone_hash=req.phone_hash,
+            consent_type=req.consent_type,
+            consent_given=req.consent_given,
+            consent_text_version=req.consent_text_version,
+            ip_address=req.ip_address,
+            user_agent=req.user_agent,
+        )
+        rid = store_consent(record)
+        return {"ok": True, "consent_id": rid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Consent recording failed: {str(e)}")
+
+
+@app.get("/api/consent/{session_id}")
+async def get_consent(session_id: str):
+    """Retrieve all consent records for a session."""
+    records = get_consent_by_session(session_id)
+    return {"session_id": session_id, "consents": records}
+
+
+# ── 13. Human Review Queue ───────────────────────────────────────
+
+@app.post("/api/review/escalate")
+async def escalate_review(req: EscalateRequest):
+    """Manually escalate a session to the human review queue."""
+    try:
+        item = HumanReviewItem(
+            session_id=req.session_id,
+            customer_name=req.customer_name,
+            escalation_reason=req.escalation_reason,
+            escalation_trigger=req.escalation_trigger,
+            priority=req.priority,
+            ai_decision=req.ai_decision,
+        )
+        rid = escalate_to_review(item)
+        return {"ok": True, "review_id": rid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Escalation failed: {str(e)}")
+
+
+@app.get("/api/review/queue")
+async def review_queue(
+    status: str | None = None,
+    priority: str | None = None,
+    limit: int = 50,
+):
+    """Get the current human review queue (filterable)."""
+    items = get_review_queue(status=status, priority=priority, limit=limit)
+    return {"queue": items, "total": len(items), "escalation_triggers": ESCALATION_TRIGGERS}
+
+
+@app.post("/api/review/{session_id}/resolve")
+async def resolve_review_endpoint(session_id: str, req: ResolveRequest):
+    """Resolve a human review item — officer approves, rejects, or overrides."""
+    updated = resolve_review(
+        session_id=session_id,
+        human_decision=req.human_decision,
+        resolution_notes=req.resolution_notes,
+        officer=req.assigned_officer,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="No pending review found for this session")
+    return {"ok": True, "session_id": session_id, "status": "RESOLVED"}
+
+
+# ── 14. RBAC Auth ───────────────────────────────────────────────
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+async def login(req: LoginRequest):
+    """Authenticate and receive a JWT token with embedded role."""
+    return authenticate_user(req.username, req.password)
+
+
+# ── 15. Admin Analytics ───────────────────────────────────────────
+
+@app.get("/api/analytics/overview")
+async def analytics_overview(days: int = 7, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
+    """Overview stats: sessions, approval/rejection rates, avg duration."""
+    return get_overview_stats(days)
+
+
+@app.get("/api/analytics/fraud")
+async def analytics_fraud(days: int = 30, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
+    """Fraud flag breakdown by type."""
+    return get_fraud_stats(days)
+
+
+@app.get("/api/analytics/regional")
+async def analytics_regional(days: int = 30, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
+    """Approval rates grouped by detected city."""
+    return get_regional_breakdown(days)
+
+
+@app.get("/api/analytics/ai-performance")
+async def analytics_ai_performance(days: int = 7, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
+    """AI performance metrics: escalations, question counts, repeats."""
+    return get_ai_performance_metrics(days)
+
+
+# ── 16. Conversational Analytics Agent ───────────────────────────
+
+from services.analytics_agent import ask_analytics
+from pydantic import BaseModel as _BaseModel
+
+class AnalyticsAskRequest(_BaseModel):
+    question: str
+
+@app.post("/api/analytics/ask")
+async def analytics_ask(req: AnalyticsAskRequest, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
+    """Ask a natural language question about loan session data."""
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+    result = ask_analytics(req.question)
+    return result
+
+
+# ── 17. Verification Registry ────────────────────────────────────
+
+from services.verification_registry import run_all_verifications
+
+class VerifyRegistryRequest(_BaseModel):
+    aadhaar_number: str | None = None
+    pan_number: str | None = None
+    declared_name: str = ""
+    account_number: str | None = None
+    ifsc_code: str | None = None
+    gstin: str | None = None
+    qr_data: str | None = None
+
+@app.post("/api/verify/registry")
+async def verify_registry(req: VerifyRegistryRequest):
+    """Run all applicable official database verifications."""
+    result = await run_all_verifications(
+        aadhaar_number=req.aadhaar_number,
+        pan_number=req.pan_number,
+        declared_name=req.declared_name,
+        account_number=req.account_number,
+        ifsc_code=req.ifsc_code,
+        gstin=req.gstin,
+        qr_data=req.qr_data,
+    )
+    return result
+
+
+# ── 18. DigiLocker Integration (Mock Architecture) ──────────────
+
+@app.post("/api/digilocker/initiate")
+async def digilocker_initiate(session_id: str = ""):
+    """Initiate DigiLocker OAuth flow (mock for hackathon).
+
+    Production flow:
+    1. Redirect user to consent.digilocker.gov.in
+    2. User logs in with Aadhaar OTP
+    3. DigiLocker returns digitally signed Aadhaar XML
+    4. Verify digital signature using UIDAI public key
+    5. Extract and trust the data (guaranteed authentic)
+    """
+    return {
+        "status": "mock",
+        "redirect_url": "https://consent.digilocker.gov.in/auth",
+        "session_id": session_id,
+        "production_flow": [
+            "1. Redirect to DigiLocker OAuth (consent.digilocker.gov.in)",
+            "2. User logs in with Aadhaar OTP",
+            "3. DigiLocker returns signed Aadhaar XML",
+            "4. Verify UIDAI digital signature (RSA public key)",
+            "5. Extract verified data — impossible to fake",
+        ],
+        "partner_registration": "https://digilocker.gov.in/partners",
+        "note": "DigiLocker Partner API registration required. Documents fetched from DigiLocker have digital signatures from issuing authorities — they cannot be faked.",
+    }
+
+
+@app.post("/api/digilocker/callback")
+async def digilocker_callback(code: str = "", session_id: str = ""):
+    """Mock DigiLocker OAuth callback with simulated signed document."""
+    return {
+        "status": "mock_success",
+        "session_id": session_id,
+        "document_type": "aadhaar",
+        "digitally_signed": True,
+        "issuer": "UIDAI",
+        "signature_verified": True,
+        "extracted_data": {
+            "name": "Demo User",
+            "dob": "01/01/1990",
+            "gender": "M",
+            "aadhaar_last_4": "1234",
+            "address": "Demo Address, City, State - 400001",
+            "photo_available": True,
+        },
+        "authenticity": "GUARANTEED — Document fetched directly from issuing authority via DigiLocker",
+    }
+
+
+# ── 19. Document Forensics Endpoint ─────────────────────────────
+
+from services.document_match import check_document_forensics
+
+class ForensicsRequest(_BaseModel):
+    image_b64: str
+    doc_type: str = "aadhaar"
+
+@app.post("/api/documents/forensics")
+async def document_forensics_endpoint(req: ForensicsRequest):
+    """Run document forensics analysis (QR, metadata, edge sharpness)."""
+    result = check_document_forensics(req.image_b64, req.doc_type)
+    return result
 
 
 if __name__ == "__main__":

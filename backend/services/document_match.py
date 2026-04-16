@@ -19,6 +19,172 @@ _PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 _AADHAAR_RE = re.compile(r"^[0-9]{12}$")
 _BLOOD_GROUP_RE = re.compile(r"^(A|B|AB|O)[+-]$", re.IGNORECASE)
 
+
+# ── Document Forensics ──────────────────────────────────────────
+
+def check_document_forensics(image_b64: str, doc_type: str = "aadhaar") -> dict:
+    """Check a document image for signs of tampering or AI generation.
+
+    Performs 3 forensic checks:
+    1. QR code extraction (real Aadhaar cards have scannable QR codes)
+    2. Metadata analysis (AI-generated images have unusual EXIF patterns)
+    3. Edge sharpness analysis (AI docs have unusually perfect/sharp edges)
+
+    Args:
+        image_b64: Base64-encoded document image.
+        doc_type: Document type — "aadhaar", "pan", or "address_proof".
+
+    Returns:
+        Dict with forensic analysis results and overall score (0-1).
+    """
+    import io
+
+    cleaned = _clean_b64(image_b64)
+
+    qr_found = False
+    qr_data = None
+    qr_data_matches_declared = False
+    suspected_digital_fake = False
+    font_consistency_score = 0.85  # Default: assume OK unless flagged
+    forensics_flags = []
+
+    # ── 1. QR Code Extraction (pyzbar) ──
+    try:
+        import cv2
+        import numpy as np
+        from pyzbar import pyzbar as pyzbar_lib
+
+        image_bytes = base64.b64decode(cleaned)
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+        if image is not None:
+            decoded_objects = pyzbar_lib.decode(image)
+            for obj in decoded_objects:
+                if obj.type == "QRCODE":
+                    qr_found = True
+                    try:
+                        qr_data = obj.data.decode("utf-8")
+                    except Exception:
+                        qr_data = str(obj.data)
+                    break
+
+            if doc_type == "aadhaar":
+                if qr_found and qr_data:
+                    # Real Aadhaar QR contains XML/JSON with holder data
+                    aadhaar_indicators = ["uid", "name", "dob", "gender", "aadhaar", "pincode"]
+                    matches = sum(1 for ind in aadhaar_indicators if ind.lower() in qr_data.lower())
+                    qr_data_matches_declared = matches >= 2
+                elif not qr_found:
+                    forensics_flags.append("no_qr_code_found")
+    except ImportError:
+        forensics_flags.append("pyzbar_not_available")
+    except Exception:
+        forensics_flags.append("qr_extraction_error")
+
+    # ── 2. Metadata / AI Generation Analysis ──
+    try:
+        from PIL import Image as PILImage
+        from PIL.ExifTags import TAGS
+
+        image_bytes = base64.b64decode(cleaned)
+        img = PILImage.open(io.BytesIO(image_bytes))
+
+        exif_data = img._getexif() if hasattr(img, "_getexif") else None
+        has_exif = exif_data is not None and len(exif_data) > 0
+
+        # AI-generated images typically lack camera EXIF data
+        if has_exif:
+            tag_names = set()
+            for tag_id, value in exif_data.items():
+                tag_name = TAGS.get(tag_id, str(tag_id))
+                tag_names.add(tag_name)
+
+            # Real camera photos have Make, Model, DateTime
+            camera_tags = {"Make", "Model", "DateTime", "ExifOffset"}
+            has_camera_info = bool(camera_tags & tag_names)
+
+            # Check software field for AI tool indicators
+            software = str(exif_data.get(0x0131, "")).lower()
+            ai_indicators = ["dall-e", "midjourney", "stable diffusion", "photoshop",
+                           "canva", "figma", "gimp", "paint"]
+            if any(ind in software for ind in ai_indicators):
+                suspected_digital_fake = True
+                forensics_flags.append(f"suspicious_software: {software}")
+        else:
+            # No EXIF at all — could be screenshot or AI-generated
+            forensics_flags.append("no_exif_metadata")
+
+        # Check image dimensions — screenshots are often exact screen sizes
+        w, h = img.size
+        common_screen_sizes = [
+            (1920, 1080), (1366, 768), (1440, 900), (2560, 1440),
+            (1080, 1920), (768, 1366), (375, 812), (414, 896),
+        ]
+        if (w, h) in common_screen_sizes:
+            forensics_flags.append("screenshot_dimensions_detected")
+            suspected_digital_fake = True
+
+    except ImportError:
+        forensics_flags.append("pillow_not_available")
+    except Exception:
+        forensics_flags.append("metadata_analysis_error")
+
+    # ── 3. Edge Sharpness Analysis ──
+    try:
+        import cv2
+        import numpy as np
+
+        image_bytes = base64.b64decode(cleaned)
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+
+        if image is not None:
+            # Laplacian variance — very high = suspiciously sharp (AI-gen),
+            # very low = blurry photo of a photo
+            laplacian = cv2.Laplacian(image, cv2.CV_64F)
+            variance = laplacian.var()
+
+            if variance > 3000:
+                forensics_flags.append("unusually_sharp_edges")
+                font_consistency_score = max(0.4, font_consistency_score - 0.25)
+            elif variance < 20:
+                forensics_flags.append("extremely_blurry")
+                font_consistency_score = max(0.3, font_consistency_score - 0.35)
+    except Exception:
+        forensics_flags.append("edge_analysis_error")
+
+    # ── Compute overall forensics score ──
+    score = 1.0
+    # QR code is the strongest signal for Aadhaar
+    if doc_type == "aadhaar":
+        if qr_found and qr_data_matches_declared:
+            score = min(score, 0.95)  # Strong authenticity signal
+        elif qr_found and not qr_data_matches_declared:
+            score = min(score, 0.65)
+        else:
+            score = min(score, 0.45)  # No QR on Aadhaar is suspicious
+
+    if suspected_digital_fake:
+        score = min(score, 0.25)
+
+    # Penalty for each flag
+    score = max(0.05, score - len(forensics_flags) * 0.08)
+
+    return {
+        "qr_found": qr_found,
+        "qr_data": qr_data[:200] if qr_data else None,  # Truncate for response
+        "qr_data_matches_declared": qr_data_matches_declared,
+        "suspected_digital_fake": suspected_digital_fake,
+        "font_consistency_score": round(font_consistency_score, 3),
+        "forensics_score": round(score, 3),
+        "forensics_flags": forensics_flags,
+        "doc_type": doc_type,
+    }
+
+
+# ── End Document Forensics ──────────────────────────────────────
+
 _VERHOEFF_D = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
     [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],

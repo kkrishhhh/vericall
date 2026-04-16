@@ -1,4 +1,8 @@
-"""Audit log persistence with SQLite primary storage and JSONL fallback."""
+"""Audit log persistence with SQLite primary storage and JSONL fallback.
+
+PII Protection: All phone numbers, Aadhaar numbers, and PAN numbers are
+hashed via SHA-256 before storage. Raw PII is NEVER persisted to disk.
+"""
 
 import json
 import os
@@ -7,6 +11,8 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+from security_utils import hash_pii_fields
 
 _lock = threading.Lock()
 
@@ -77,6 +83,9 @@ def append_session_record(payload: dict) -> str:
     sid = record.get("session_id") or str(uuid.uuid4())
     record["session_id"] = sid
     record["logged_at"] = datetime.now(timezone.utc).isoformat()
+
+    # ── PII Protection: Hash sensitive fields before persistence ──
+    record = hash_pii_fields(record, sid)
 
     risk = record.get("risk") or {}
     offer = record.get("offer") or {}

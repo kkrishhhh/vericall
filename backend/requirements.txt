@@ -11,3 +11,6 @@ httpx
 reportlab
 chromadb
 sentence-transformers
+PyJWT
+pyzbar
+Pillow
