@@ -2,11 +2,16 @@
 
 import os
 import time
+import logging
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+# Multi-agent orchestration layer
+from agents.orchestrator import OrchestratorAgent
+from agents.state import OrchestrateRequest, OrchestrateResponse
 
 from models import (
     AgentRequest, AgentResponse,
@@ -433,6 +438,43 @@ async def decision_evaluate(req: DecisionRequest):
     out = evaluate_decision(req.model_dump())
     print("[DECISION_LOG]", out)
     return DecisionResponse(**out)
+
+
+# ── 11. Multi-Agent Orchestration ────────────────────────────────
+
+# Singleton orchestrator instance
+_orchestrator = OrchestratorAgent()
+
+
+@app.post("/api/agent/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate_endpoint(req: OrchestrateRequest):
+    """Multi-agent orchestration endpoint.
+
+    Accepts the current AgentState + user action, runs the agentic
+    pipeline (InterviewAgent → KYCAgent → DocumentAgent → DecisionAgent),
+    and returns the updated state with the next UI phase.
+
+    The orchestrator uses Groq llama-3.3-70b-versatile with tool-calling
+    to determine which sub-agent to invoke. Falls back to deterministic
+    routing if the LLM is unavailable.
+
+    Features:
+    - Agentic retry loop: DocumentAgent auto-requests re-upload on
+      cross-validation failure (max 3 retries per document).
+    - PolicyRAG: Every decision is paired with RBI KYC Master Direction
+      2016 regulatory citation via ChromaDB + MiniLM-L6-v2.
+    - Full audit trail: Every agent action is timestamped and tagged
+      with regulatory references for V-CIP compliance.
+    """
+    try:
+        result = await _orchestrator.orchestrate(req)
+        return result
+    except Exception as e:
+        logging.error(f"Orchestration error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Orchestration failed: {str(e)}",
+        )
 
 
 if __name__ == "__main__":

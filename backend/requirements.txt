@@ -9,3 +9,5 @@ python-multipart
 tf-keras
 httpx
 reportlab
+chromadb
+sentence-transformers
