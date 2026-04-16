@@ -86,8 +86,19 @@ def render_application_form_pdf(doc: dict) -> bytes:
     row("Declared Age", fields.get("declared_age"))
     row("Employment Type", fields.get("employment_type"))
     row("Monthly Income", _money(fields.get("monthly_income_inr")))
+    row("Loan Type", fields.get("loan_type"))
     row("Loan Purpose", fields.get("loan_purpose"))
     row("Verbal Consent Captured", "Yes" if fields.get("verbal_consent_captured") else "No")
+    row("Campaign Link", fields.get("campaign_link"))
+
+    document_requirements = fields.get("document_requirements") or []
+    if document_requirements:
+        section("Document Checklist")
+        for doc in document_requirements:
+            if isinstance(doc, dict):
+                row(doc.get("label") or "Document", "Required" if doc.get("required", True) else "Optional")
+            else:
+                row(str(doc), "Required")
 
     section("Risk and Decision")
     row("Risk Band", fields.get("risk_band"))
@@ -112,6 +123,49 @@ def render_application_form_pdf(doc: dict) -> bytes:
     pdf.setFont("Helvetica", 9)
     pdf.drawString(40, y, "Applicant Signature")
     pdf.drawString(320, y, "Authorized Signatory")
+
+    pdf.save()
+    return buf.getvalue()
+
+
+def render_kyc_review_pdf(payload: dict) -> bytes:
+    """Generate a printable KYC review summary PDF."""
+    buf = BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+    y = height - 50
+
+    def title(line: str) -> None:
+        nonlocal y
+        pdf.setFont("Helvetica-Bold", 16)
+        pdf.drawString(40, y, line)
+        y -= 24
+
+    def row(label: str, value: object) -> None:
+        nonlocal y
+        if y < 70:
+            pdf.showPage()
+            y = height - 50
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(48, y, f"{label}:")
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(200, y, _text(value))
+        y -= 14
+
+    title("Poonawalla Fincorp - KYC Review Sheet")
+    _draw_aadhaar_photo(pdf, _text(payload.get("selfie_image")), width, height)
+    row("Session ID", payload.get("session_id") or "")
+    row("Applicant Name", payload.get("applicant_name") or "")
+    row("Aadhaar Number", payload.get("aadhaar_number") or "")
+    row("PAN Number", payload.get("pan_number") or "")
+    row("Date of Birth", payload.get("dob") or "")
+    row("Gender", payload.get("gender") or "")
+    row("Loan Type", payload.get("loan_type") or "")
+    row("Pre-approved Amount", _money(payload.get("preapproved_amount") or 0))
+
+    y -= 24
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(40, y, "This sheet captures customer-reviewed KYC details prior to final loan document verification.")
 
     pdf.save()
     return buf.getvalue()

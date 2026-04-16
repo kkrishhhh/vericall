@@ -1,10 +1,90 @@
-"""Core interview/KYC/decision helpers without loan-type doc branching."""
+"""Core interview/KYC/decision helpers with loan-type policy branching."""
 
 from __future__ import annotations
 
 import hashlib
 import re
 from typing import Any
+
+
+_DOCUMENT_POLICY: dict[str, dict[str, Any]] = {
+    "personal": {
+        "label": "Personal Loan",
+        "affordability_ratio": 0.45,
+        "tenure_months": 36,
+        "documents": [
+            ("aadhaar", "Aadhaar Card", True),
+            ("pan", "PAN Card", True),
+            ("selfie", "Live selfie capture", True),
+            ("address_proof", "Address proof or utility bill", True),
+        ],
+    },
+    "business": {
+        "label": "Business Loan",
+        "affordability_ratio": 0.40,
+        "tenure_months": 48,
+        "documents": [
+            ("aadhaar", "Aadhaar Card", True),
+            ("pan", "PAN Card", True),
+            ("selfie", "Live selfie capture", True),
+            ("address_proof", "Address proof or utility bill", True),
+            ("business_proof", "Business proof / GST / shop registration", True),
+            ("bank_statement", "Last 6 months bank statement", True),
+        ],
+    },
+    "salary": {
+        "label": "Salary Advance / Salary Loan",
+        "affordability_ratio": 0.42,
+        "tenure_months": 24,
+        "documents": [
+            ("aadhaar", "Aadhaar Card", True),
+            ("pan", "PAN Card", True),
+            ("selfie", "Live selfie capture", True),
+            ("address_proof", "Address proof or utility bill", True),
+            ("salary_slip", "Latest salary slip", True),
+            ("bank_statement", "Last 3 months bank statement", True),
+        ],
+    },
+    "home": {
+        "label": "Home Loan",
+        "affordability_ratio": 0.35,
+        "tenure_months": 180,
+        "documents": [
+            ("aadhaar", "Aadhaar Card", True),
+            ("pan", "PAN Card", True),
+            ("selfie", "Live selfie capture", True),
+            ("address_proof", "Current address proof", True),
+            ("property_docs", "Property documents", True),
+            ("income_proof", "Income proof / ITR", True),
+        ],
+    },
+    "vehicle": {
+        "label": "Vehicle Loan",
+        "affordability_ratio": 0.38,
+        "tenure_months": 60,
+        "documents": [
+            ("aadhaar", "Aadhaar Card", True),
+            ("pan", "PAN Card", True),
+            ("selfie", "Live selfie capture", True),
+            ("address_proof", "Address proof or utility bill", True),
+            ("vehicle_quote", "Vehicle quotation / invoice", True),
+            ("rc_or_registration", "RC / registration proof", True),
+        ],
+    },
+    "education": {
+        "label": "Education Loan",
+        "affordability_ratio": 0.33,
+        "tenure_months": 72,
+        "documents": [
+            ("aadhaar", "Aadhaar Card", True),
+            ("pan", "PAN Card", True),
+            ("selfie", "Live selfie capture", True),
+            ("address_proof", "Address proof or utility bill", True),
+            ("admission_letter", "Admission letter / fee receipt", True),
+            ("coapplicant_income", "Co-applicant income proof", False),
+        ],
+    },
+}
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -48,6 +128,42 @@ def _loan_type_key(loan_type: str) -> str:
     return alias_map.get(lt, lt)
 
 
+def build_document_requirements(loan_type: str, pan_has_address: bool = False) -> list[dict[str, Any]]:
+    policy = _DOCUMENT_POLICY.get(_loan_type_key(loan_type), _DOCUMENT_POLICY["personal"])
+    requirements: list[dict[str, Any]] = []
+    for key, label, required in policy["documents"]:
+        if key == "address_proof" and pan_has_address:
+            label = "Address proof or utility bill (PAN address already visible, if valid)"
+        requirements.append({"key": key, "label": label, "required": required})
+    return requirements
+
+
+def _affordability_limit(income: float, loan_type: str) -> tuple[float, dict[str, Any]]:
+    policy = _DOCUMENT_POLICY.get(_loan_type_key(loan_type), _DOCUMENT_POLICY["personal"])
+    ratio = float(policy.get("affordability_ratio", 0.4))
+    tenure_months = int(policy.get("tenure_months", 36))
+    monthly_emi_capacity = income * ratio
+
+    # Conservative, RBI-aligned affordability estimate: keep EMI well within monthly income.
+    assumed_rate = 0.13
+    monthly_rate = assumed_rate / 12
+    factor = (1 + monthly_rate) ** tenure_months
+    if monthly_rate > 0:
+        loan_amount = monthly_emi_capacity * ((factor - 1) / (monthly_rate * factor))
+    else:
+        loan_amount = monthly_emi_capacity * tenure_months
+
+    loan_amount = max(0.0, round(loan_amount, 0))
+    policy_summary = {
+        "affordability_ratio": ratio,
+        "monthly_emi_capacity": round(monthly_emi_capacity, 0),
+        "assumed_rate": assumed_rate,
+        "tenure_months": tenure_months,
+        "policy_label": policy["label"],
+    }
+    return loan_amount, policy_summary
+
+
 def compute_preapproval(profile: dict) -> dict:
     name = str(profile.get("name") or "Customer").strip()
     employment = _employment_bucket(str(profile.get("employment_type") or profile.get("employment") or ""))
@@ -56,18 +172,13 @@ def compute_preapproval(profile: dict) -> dict:
     requested = max(0.0, _to_float(profile.get("requested_loan_amount") or profile.get("requested_amount")))
     declared_age = int(_to_float(profile.get("declared_age") or profile.get("age"), 0.0))
 
-    if employment == "salaried":
-        mult_min, mult_max = 10, 15
-    elif employment == "self-employed":
-        mult_min, mult_max = 6, 10
-    else:
-        mult_min, mult_max = 8, 12
-
-    eligible_min = round(income * mult_min, 0)
-    eligible_max = round(income * mult_max, 0)
+    pan_has_address = bool(profile.get("pan_has_address"))
+    eligible_amount, policy_summary = _affordability_limit(income, loan_type)
+    eligible_min = round(eligible_amount * 0.75, 0)
+    eligible_max = eligible_amount
     message = (
-        f"You requested INR {requested:,.0f}. "
-        f"Based on your profile, you are pre-approved up to INR {eligible_max:,.0f}."
+        f"Based on RBI-aligned affordability checks for your {policy_summary['policy_label'].lower()}, "
+        f"you are pre-approved up to INR {eligible_max:,.0f}."
     )
 
     return {
@@ -80,6 +191,8 @@ def compute_preapproval(profile: dict) -> dict:
         "eligible_min": eligible_min,
         "eligible_max": eligible_max,
         "eligible_amount": eligible_max,
+        "document_requirements": build_document_requirements(loan_type, pan_has_address=pan_has_address),
+        "policy_summary": policy_summary,
         "message": message,
     }
 

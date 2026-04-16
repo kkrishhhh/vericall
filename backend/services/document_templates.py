@@ -29,8 +29,11 @@ def render_application_form_html(doc: dict) -> str:
     employment_type = _text(fields.get("employment_type"))
     monthly_income = _money(fields.get("monthly_income_inr"))
     loan_purpose = _text(fields.get("loan_purpose"))
+    loan_type = _text(fields.get("loan_type"))
     consent = "Yes" if fields.get("verbal_consent_captured") else "No"
     app_time = _text(fields.get("application_timestamp"))
+    campaign_link = _text(fields.get("campaign_link"))
+    document_requirements = fields.get("document_requirements") or []
 
     risk_band = _text(fields.get("risk_band"))
     risk_score = _text(fields.get("risk_score"))
@@ -45,12 +48,28 @@ def render_application_form_html(doc: dict) -> str:
 
     session_id = _text(fields.get("session_id"))
     aadhaar_photo_base64 = _text(fields.get("aadhaar_photo_base64"))
+    photo_html = ""
+    if aadhaar_photo_base64:
+        photo_html = f'<img class="photo" src="{aadhaar_photo_base64}" alt="Applicant photo" />'
+
+    checklist_rows: list[str] = []
+    for doc_item in document_requirements:
+        if isinstance(doc_item, dict):
+            label = _text(doc_item.get("label") or "Document")
+            status = "Required" if doc_item.get("required", True) else "Optional"
+        else:
+            label = _text(doc_item)
+            status = "Required"
+        checklist_rows.append(
+            f'<div class="row full"><div class="label">{label}</div><div class="value">{status}</div></div>'
+        )
+    checklist_html = "".join(checklist_rows)
 
     return f"""<!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Loan Application Form - {applicant_name or 'Applicant'}</title>
   <style>
     :root {{
@@ -94,53 +113,62 @@ def render_application_form_html(doc: dict) -> str:
   </style>
 </head>
 <body>
-  <article class=\"page\">
-    <header class=\"header\">
-      <h1 class=\"title\">Poonawalla Fincorp - Loan Application Form</h1>
-      <p class=\"subtitle\">Auto-filled from AI onboarding session | Session ID: {session_id}</p>
-      {f'<img class="photo" src="{aadhaar_photo_base64}" alt="Applicant photo" />' if aadhaar_photo_base64 else ''}
+  <article class="page">
+    <header class="header">
+      <h1 class="title">Poonawalla Fincorp - Loan Application Form</h1>
+      <p class="subtitle">Auto-filled from AI onboarding session | Session ID: {session_id}</p>
+      {photo_html}
     </header>
 
-    <section class=\"section\">
+    <section class="section">
       <h2>Applicant Details</h2>
-      <div class=\"grid\">
-        <div class=\"row\"><div class=\"label\">Applicant Name</div><div class=\"value\">{applicant_name}</div></div>
-        <div class=\"row\"><div class=\"label\">Phone Number</div><div class=\"value\">{phone}</div></div>
-        <div class=\"row\"><div class=\"label\">Declared Age</div><div class=\"value\">{declared_age}</div></div>
-        <div class=\"row\"><div class=\"label\">Employment Type</div><div class=\"value\">{employment_type}</div></div>
-        <div class=\"row\"><div class=\"label\">Monthly Income</div><div class=\"value\">{monthly_income}</div></div>
-        <div class=\"row\"><div class=\"label\">Verbal Consent Captured</div><div class=\"value\">{consent}</div></div>
-        <div class=\"row full\"><div class=\"label\">Loan Purpose</div><div class=\"value\">{loan_purpose}</div></div>
-        <div class=\"row\"><div class=\"label\">Application Time</div><div class=\"value\">{app_time}</div></div>
+      <div class="grid">
+        <div class="row"><div class="label">Applicant Name</div><div class="value">{applicant_name}</div></div>
+        <div class="row"><div class="label">Phone Number</div><div class="value">{phone}</div></div>
+        <div class="row"><div class="label">Declared Age</div><div class="value">{declared_age}</div></div>
+        <div class="row"><div class="label">Employment Type</div><div class="value">{employment_type}</div></div>
+        <div class="row"><div class="label">Monthly Income</div><div class="value">{monthly_income}</div></div>
+        <div class="row"><div class="label">Loan Type</div><div class="value">{loan_type}</div></div>
+        <div class="row"><div class="label">Verbal Consent Captured</div><div class="value">{consent}</div></div>
+        <div class="row full"><div class="label">Loan Purpose</div><div class="value">{loan_purpose}</div></div>
+        <div class="row full"><div class="label">Campaign Link</div><div class="value">{campaign_link}</div></div>
+        <div class="row"><div class="label">Application Time</div><div class="value">{app_time}</div></div>
       </div>
     </section>
 
-    <section class=\"section\">
+    <section class="section">
+      <h2>Document Checklist</h2>
+      <div class="grid">
+        {checklist_html}
+      </div>
+    </section>
+
+    <section class="section">
       <h2>Risk and Eligibility Snapshot</h2>
-      <div class=\"grid\">
-        <div class=\"row\"><div class=\"label\">Risk Band</div><div class=\"value\">{risk_band}</div></div>
-        <div class=\"row\"><div class=\"label\">Risk Score</div><div class=\"value\">{risk_score}</div></div>
-        <div class=\"row\"><div class=\"label\">Bureau Score</div><div class=\"value\">{bureau_score}</div></div>
-        <div class=\"row\"><div class=\"label\">Propensity Score</div><div class=\"value\">{propensity_score}</div></div>
+      <div class="grid">
+        <div class="row"><div class="label">Risk Band</div><div class="value">{risk_band}</div></div>
+        <div class="row"><div class="label">Risk Score</div><div class="value">{risk_score}</div></div>
+        <div class="row"><div class="label">Bureau Score</div><div class="value">{bureau_score}</div></div>
+        <div class="row"><div class="label">Propensity Score</div><div class="value">{propensity_score}</div></div>
       </div>
     </section>
 
-    <section class=\"section\">
+    <section class="section">
       <h2>Offer Summary</h2>
-      <div class=\"grid\">
-        <div class=\"row\"><div class=\"label\">Offer Status</div><div class=\"value\">{offer_status}</div></div>
-        <div class=\"row\"><div class=\"label\">Approved Amount</div><div class=\"value\">{approved_amount}</div></div>
-        <div class=\"row\"><div class=\"label\">Interest Rate (%)</div><div class=\"value\">{interest_rate}</div></div>
-        <div class=\"row\"><div class=\"label\">Tenure (Months)</div><div class=\"value\">{tenure}</div></div>
-        <div class=\"row\"><div class=\"label\">Monthly EMI</div><div class=\"value\">{emi}</div></div>
+      <div class="grid">
+        <div class="row"><div class="label">Offer Status</div><div class="value">{offer_status}</div></div>
+        <div class="row"><div class="label">Approved Amount</div><div class="value">{approved_amount}</div></div>
+        <div class="row"><div class="label">Interest Rate (%)</div><div class="value">{interest_rate}</div></div>
+        <div class="row"><div class="label">Tenure (Months)</div><div class="value">{tenure}</div></div>
+        <div class="row"><div class="label">Monthly EMI</div><div class="value">{emi}</div></div>
       </div>
     </section>
 
-    <footer class=\"footer\">
+    <footer class="footer">
       <p>This is an auto-generated pre-fill document. Final sanction remains subject to policy and verification.</p>
-      <div class=\"sign-grid\">
-        <div class=\"sign-box\">Applicant Signature</div>
-        <div class=\"sign-box\">Authorized Signatory</div>
+      <div class="sign-grid">
+        <div class="sign-box">Applicant Signature</div>
+        <div class="sign-box">Authorized Signatory</div>
       </div>
     </footer>
   </article>

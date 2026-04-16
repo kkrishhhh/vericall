@@ -34,8 +34,11 @@ def build_document_pack(session: dict) -> dict:
     income = float(_pick(extracted, "income", default=0) or 0)
     employment = str(_pick(extracted, "employment", default=""))
     purpose = str(_pick(extracted, "purpose", "loan_purpose", default=""))
+    loan_type = str(_pick(extracted, "loan_type", default=purpose or "personal"))
     consent = bool(_pick(extracted, "consent", default=False))
     aadhaar_photo_base64 = _pick(extracted, "aadhaar_photo_base64", default=None)
+    campaign_link = session.get("campaign_link") or ""
+    document_requirements = session.get("document_requirements") or extracted.get("document_requirements") or []
 
     customer_fields = {
         "applicant_name": name,
@@ -44,10 +47,13 @@ def build_document_pack(session: dict) -> dict:
         "employment_type": employment,
         "monthly_income_inr": income,
         "loan_purpose": purpose,
+        "loan_type": loan_type,
         "verbal_consent_captured": consent,
         "session_id": session.get("session_id") or "",
         "application_timestamp": _iso_to_local(session.get("logged_at")),
         "aadhaar_photo_base64": aadhaar_photo_base64,
+        "campaign_link": campaign_link,
+        "document_requirements": document_requirements,
     }
 
     decision_fields = {
@@ -60,6 +66,7 @@ def build_document_pack(session: dict) -> dict:
         "interest_rate": offer.get("interest_rate") or 0,
         "tenure_months": offer.get("tenure_months") or 0,
         "monthly_emi": offer.get("monthly_emi") or 0,
+        "campaign_link": campaign_link,
     }
 
     application_form = {

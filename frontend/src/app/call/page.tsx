@@ -16,7 +16,21 @@ interface Message {
   timestamp?: string;
 }
 
-type CallPhase = "connecting" | "conversation" | "analyzing" | "kyc" | "upload-docs" | "offer" | "error";
+type CallPhase =
+  | "connecting"
+  | "conversation"
+  | "analyzing"
+  | "kyc-upload"
+  | "preapproval-review"
+  | "loan-docs"
+  | "offer"
+  | "error";
+
+type DocumentRequirement = {
+  key: string;
+  label: string;
+  required?: boolean;
+};
 
 interface PreapprovalData {
   name: string;
@@ -28,16 +42,9 @@ interface PreapprovalData {
   eligible_amount: number;
   eligible_min: number;
   eligible_max: number;
+  document_requirements?: DocumentRequirement[];
+  policy_summary?: Record<string, unknown>;
   message: string;
-}
-
-interface KycResult {
-  kyc_status: "VERIFIED" | "FAILED";
-  aadhaar_valid: boolean;
-  pan_valid: boolean;
-  selfie_captured: boolean;
-  face_match_score: number;
-  risk_flag: string;
 }
 
 interface FinalDecision {
@@ -47,6 +54,31 @@ interface FinalDecision {
   tenure_options: number[];
   reason: string;
   risk_flag: string;
+}
+
+interface KycDocVerifyResult {
+  kyc_status: "VERIFIED" | "FAILED";
+  reason: string;
+  name_match?: boolean;
+  dob_match?: boolean;
+  gender_match?: boolean;
+  aadhaar_number_valid?: boolean;
+  pan_number_valid?: boolean;
+  selfie_match_score?: number | null;
+  selfie_match?: boolean | null;
+  aadhaar_photo_base64?: string | null;
+  extracted?: {
+    aadhaar?: Record<string, unknown>;
+    pan?: Record<string, unknown>;
+  };
+}
+
+interface EditableKycData {
+  applicant_name: string;
+  aadhaar_number: string;
+  pan_number: string;
+  dob: string;
+  gender: string;
 }
 
 function prettifyLoanType(loanType: string) {
@@ -61,6 +93,7 @@ function CallPageInner() {
   const roomUrl = searchParams.get("room") || "";
   const phone = searchParams.get("phone") || "";
   const campaignId = searchParams.get("campaign_id") || "";
+  const campaignLink = searchParams.get("campaign_link") || "";
   const leadId = searchParams.get("lead_id") || "";
   const lang = searchParams.get("lang") || "en";
 
@@ -83,19 +116,29 @@ function CallPageInner() {
   const [customerSnapshot, setCustomerSnapshot] = useState<Record<string, unknown> | null>(null);
   const [processingStep, setProcessingStep] = useState("");
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
-  const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
-  const [panFile, setPanFile] = useState<File | null>(null);
+  const [isVerifyingKycDocs, setIsVerifyingKycDocs] = useState(false);
+  const [kycAadhaarFile, setKycAadhaarFile] = useState<File | null>(null);
+  const [kycPanFile, setKycPanFile] = useState<File | null>(null);
+  const [kycAadhaarImageData, setKycAadhaarImageData] = useState<string | null>(null);
+  const [kycPanImageData, setKycPanImageData] = useState<string | null>(null);
+  const [kycVerifyResult, setKycVerifyResult] = useState<KycDocVerifyResult | null>(null);
+  const [editableKycData, setEditableKycData] = useState<EditableKycData>({
+    applicant_name: "",
+    aadhaar_number: "",
+    pan_number: "",
+    dob: "",
+    gender: "",
+  });
+  const [isGeneratingKycPdf, setIsGeneratingKycPdf] = useState(false);
   const [addressFile, setAddressFile] = useState<File | null>(null);
+  const [extraDocuments, setExtraDocuments] = useState<Record<string, File | null>>({});
+  const [capturedSelfie, setCapturedSelfie] = useState<string | null>(null);
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number } | null>(null);
   const [manualInput, setManualInput] = useState("");
   const [agentNotice, setAgentNotice] = useState("");
-  const [, setJourneyStep] = useState<"interview" | "kyc" | "upload-docs" | "final">("interview");
   const [journeyLoading, setJourneyLoading] = useState(false);
   const [journeyError, setJourneyError] = useState("");
   const [preapproval, setPreapproval] = useState<PreapprovalData | null>(null);
-  const [kycResult, setKycResult] = useState<KycResult | null>(null);
-  const [aadhaarNumber, setAadhaarNumber] = useState("");
-  const [panNumber, setPanNumber] = useState("");
   const [finalDecision, setFinalDecision] = useState<FinalDecision | null>(null);
   const [sessionDropped, setSessionDropped] = useState(false);
   const sessionDropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,6 +158,13 @@ function CallPageInner() {
     geo_city?: string | null;
     city_match?: boolean | null;
     aadhaar_photo_base64?: string | null;
+    pan_photo_base64?: string | null;
+    selfie_match_score?: number | null;
+    selfie_match?: boolean | null;
+    pan_has_address?: boolean | null;
+    required_documents?: string[];
+    documents_complete?: boolean;
+    missing_required_documents?: string[];
   } | null>(null);
   const [addressCheckError, setAddressCheckError] = useState("");
   const messagesRef = useRef<Message[]>([]);
@@ -135,6 +185,13 @@ function CallPageInner() {
   const getTimestamp = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   const currentLoanType = preapproval?.loan_type || "personal";
   const currentLoanLabel = prettifyLoanType(currentLoanType);
+  const documentRequirements = preapproval?.document_requirements || [
+    { key: "aadhaar", label: "Aadhaar Card", required: true },
+    { key: "pan", label: "PAN Card", required: true },
+    { key: "selfie", label: "Live selfie capture", required: true },
+    { key: "address_proof", label: "Address proof or utility bill", required: true },
+  ];
+  const loanDocumentRequirements = documentRequirements.filter((doc) => !["aadhaar", "pan", "selfie"].includes(doc.key));
 
   const fileToDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -146,6 +203,15 @@ function CallPageInner() {
       reader.onerror = () => reject(new Error("Could not read file"));
       reader.readAsDataURL(file);
     });
+
+  const stopMediaStream = useCallback(() => {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    setMediaStream(null);
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
 
   // ── 1. Initialize camera + mic ─────────────────────────────
   useEffect(() => {
@@ -171,10 +237,9 @@ function CallPageInner() {
     return () => {
       cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-      setMediaStream(null);
+      stopMediaStream();
     };
-  }, []);
+  }, [stopMediaStream]);
 
   // ── 1b. Bind stream to <video> (element only exists after phase → conversation) ──
   useLayoutEffect(() => {
@@ -226,6 +291,64 @@ function CallPageInner() {
     };
   }, [mediaStream]);
 
+  const isLikelyBlankCanvas = (canvas: HTMLCanvasElement) => {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return true;
+    const { width, height } = canvas;
+    if (width < 2 || height < 2) return true;
+    const sample = ctx.getImageData(0, 0, Math.min(width, 64), Math.min(height, 64)).data;
+    let total = 0;
+    let pixels = 0;
+    for (let i = 0; i < sample.length; i += 4) {
+      total += sample[i] + sample[i + 1] + sample[i + 2];
+      pixels += 1;
+    }
+    const avg = pixels > 0 ? total / (pixels * 3) : 0;
+    return avg < 4;
+  };
+
+  const captureSelfie = useCallback(async (): Promise<string | null> => {
+    const stream = mediaStreamRef.current;
+
+    // Prefer direct camera frame capture when available (more reliable than video element timing).
+    if (stream) {
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        try {
+          const ImageCaptureCtor = (window as Window & { ImageCapture?: any }).ImageCapture;
+          if (ImageCaptureCtor) {
+            const imageCapture = new ImageCaptureCtor(videoTrack);
+            const bitmap = await imageCapture.grabFrame();
+            const canvas = document.createElement("canvas");
+            canvas.width = bitmap.width || 640;
+            canvas.height = bitmap.height || 480;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(bitmap, 0, 0);
+              if (!isLikelyBlankCanvas(canvas)) {
+                return canvas.toDataURL("image/jpeg", 0.85);
+              }
+            }
+          }
+        } catch {
+          // fallback below
+        }
+      }
+    }
+
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    if (isLikelyBlankCanvas(canvas)) return null;
+    return canvas.toDataURL("image/jpeg", 0.85);
+  }, []);
+
   // ── 3. Post-conversation pipeline (declared before STT / agent) ──
   const handleConversationComplete = useCallback(
     async (customerInput: Record<string, unknown>) => {
@@ -254,70 +377,34 @@ function CallPageInner() {
         setPreapproval(pre);
         setCustomerSnapshot({ interview: interviewPayload });
 
-        // Change 3: Block if consent is false
+        // Block if consent is false
         const consentGiven = Boolean(customerInput.consent);
         if (!consentGiven) {
-          setJourneyError("KYC cannot proceed without consent as required by RBI guidelines.");
+          setJourneyError("Document verification cannot proceed without consent as required by RBI guidelines.");
           setPhase("error");
           return;
         }
 
-        setJourneyStep("kyc");
-        setPhase("kyc");
+        let selfie: string | null = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          selfie = await captureSelfie();
+          if (selfie) break;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        if (selfie) {
+          setCapturedSelfie(selfie);
+        } else {
+          setJourneyError("Unable to capture a clear selfie frame from the call. Please restart the session and keep your face centered when call ends.");
+        }
+        stopMediaStream();
+        setPhase("kyc-upload");
       } catch {
         setPhase("error");
       }
     },
-    [BACKEND],
+    [BACKEND, captureSelfie, stopMediaStream],
   );
-
-  const captureSelfie = useCallback((): string | null => {
-    if (!videoRef.current) return null;
-    const video = videoRef.current;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0);
-    return canvas.toDataURL("image/jpeg", 0.75);
-  }, []);
-
-  const handleVerifyKyc = useCallback(async () => {
-    if (!preapproval) return;
-    setJourneyError("");
-    setJourneyLoading(true);
-    try {
-      const selfie = captureSelfie();
-      if (!selfie) throw new Error("Camera preview is unavailable. Keep the camera open and try KYC again.");
-
-      const kycRes = await fetch(`${BACKEND}/api/kyc/verify-identity`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          aadhaar_number: aadhaarNumber,
-          pan_number: panNumber,
-          selfie_image: selfie,
-          declared_age: preapproval.declared_age || 0,
-        }),
-      });
-      const kyc = (await kycRes.json()) as KycResult;
-      setKycResult(kyc);
-
-      if (!kycRes.ok || kyc.kyc_status !== "VERIFIED") {
-        setJourneyError("KYC failed. Please verify Aadhaar/PAN and ensure a clear face capture.");
-        setJourneyLoading(false);
-        return;
-      }
-
-      setJourneyStep("upload-docs");
-      setPhase("upload-docs");
-    } catch (error) {
-      setJourneyError(error instanceof Error ? error.message : "Unable to complete KYC at the moment.");
-    } finally {
-      setJourneyLoading(false);
-    }
-  }, [BACKEND, aadhaarNumber, panNumber, preapproval, captureSelfie]);
 
   // ── 4. Send transcript to agent (stable callback — uses ref for history) ──
   const sendToAgent = useCallback(async (text: string) => {
@@ -500,27 +587,135 @@ function CallPageInner() {
     setManualInput("");
   };
 
+  const handleVerifyKycDocuments = async () => {
+    if (!kycAadhaarFile || !kycPanFile || !capturedSelfie) {
+      setJourneyError("Upload Aadhaar and PAN, and ensure selfie was captured from call.");
+      return;
+    }
+    setJourneyError("");
+    setIsVerifyingKycDocs(true);
+    try {
+      const [aadhaarImage, panImage] = await Promise.all([
+        fileToDataUrl(kycAadhaarFile),
+        fileToDataUrl(kycPanFile),
+      ]);
+      setKycAadhaarImageData(aadhaarImage);
+      setKycPanImageData(panImage);
+
+      const res = await fetch(`${BACKEND}/api/kyc/verify-documents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aadhaar_image: aadhaarImage,
+          pan_image: panImage,
+          selfie_image: capturedSelfie,
+        }),
+      });
+      const data = (await res.json()) as KycDocVerifyResult;
+      setKycVerifyResult(data);
+
+      if (!res.ok || data.kyc_status !== "VERIFIED") {
+        setJourneyError(data.reason || "KYC verification failed. Please upload clearer Aadhaar/PAN images.");
+        return;
+      }
+
+      setEditableKycData({
+        applicant_name: String(data.extracted?.aadhaar?.name || data.extracted?.pan?.name || preapproval?.name || ""),
+        aadhaar_number: String(data.extracted?.aadhaar?.aadhaar_number || ""),
+        pan_number: String(data.extracted?.pan?.pan_number || ""),
+        dob: String(data.extracted?.aadhaar?.dob || data.extracted?.pan?.dob || ""),
+        gender: String(data.extracted?.aadhaar?.gender || data.extracted?.pan?.gender || ""),
+      });
+      setPhase("preapproval-review");
+    } catch {
+      setJourneyError("Unable to verify KYC documents right now.");
+    } finally {
+      setIsVerifyingKycDocs(false);
+    }
+  };
+
+  const handleDownloadKycPdf = async () => {
+    if (!preapproval) return;
+    setIsGeneratingKycPdf(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/kyc/review-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...editableKycData,
+          loan_type: preapproval.loan_type,
+          preapproved_amount: preapproval.eligible_amount,
+          selfie_image: capturedSelfie,
+          session_id: sessionIdRef.current,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to generate KYC PDF");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${sessionIdRef.current}-kyc-review.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setJourneyError("Could not generate KYC PDF right now.");
+    } finally {
+      setIsGeneratingKycPdf(false);
+    }
+  };
+
+  const handleProceedAfterKycReview = () => {
+    if (!kycVerifyResult || kycVerifyResult.kyc_status !== "VERIFIED") {
+      setJourneyError("Complete KYC verification before continuing.");
+      return;
+    }
+    setPhase("loan-docs");
+  };
+
   const handleDocumentSubmit = async () => {
-    if (!aadhaarFile || !panFile || !addressFile || !preapproval || !kycResult) return;
+    if (!addressFile || !preapproval || !capturedSelfie || !kycAadhaarImageData || !kycPanImageData) return;
     setJourneyError("");
     setAddressCheck(null);
     setAddressCheckError("");
     setIsUploadingDocs(true);
     setJourneyLoading(true);
     try {
-      const [aadhaarImage, panImage, addressProofImage] = await Promise.all([
-        fileToDataUrl(aadhaarFile),
-        fileToDataUrl(panFile),
-        fileToDataUrl(addressFile),
-      ]);
+      const requiredDocumentKeys = (documentRequirements || [])
+        .filter((doc) => doc.required !== false)
+        .map((doc) => doc.key);
+
+      const uploadedDocumentKeys = [
+        ...(kycAadhaarImageData ? ["aadhaar"] : []),
+        ...(kycPanImageData ? ["pan"] : []),
+        ...(addressFile ? ["address_proof"] : []),
+        ...(capturedSelfie ? ["selfie"] : []),
+        ...Object.entries(extraDocuments)
+          .filter(([, file]) => Boolean(file))
+          .map(([key]) => key),
+      ];
+
+      const missingBeforeVerify = requiredDocumentKeys.filter((key) => !uploadedDocumentKeys.includes(key));
+      if (missingBeforeVerify.length > 0) {
+        setAddressCheckError(`Please upload required documents first: ${missingBeforeVerify.join(", ")}`);
+        setJourneyLoading(false);
+        setIsUploadingDocs(false);
+        return;
+      }
+
+      const addressProofImage = await fileToDataUrl(addressFile);
 
       const verifyRes = await fetch(`${BACKEND}/api/verify-address`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          aadhaar_image: aadhaarImage,
-          pan_image: panImage,
+          aadhaar_image: kycAadhaarImageData,
+          pan_image: kycPanImageData,
           address_proof_image: addressProofImage,
+          selfie_image: capturedSelfie,
+          required_documents: requiredDocumentKeys,
+          uploaded_documents: uploadedDocumentKeys,
           latitude: locationData?.latitude ?? null,
           longitude: locationData?.longitude ?? null,
         }),
@@ -549,6 +744,13 @@ function CallPageInner() {
         geo_city?: string | null;
         city_match?: boolean | null;
         aadhaar_photo_base64?: string | null;
+        pan_photo_base64?: string | null;
+        selfie_match_score?: number | null;
+        selfie_match?: boolean | null;
+        pan_has_address?: boolean | null;
+        required_documents?: string[];
+        documents_complete?: boolean;
+        missing_required_documents?: string[];
       };
       setAddressCheck(verifyData);
       try {
@@ -567,7 +769,7 @@ function CallPageInner() {
         /* ignore */
       }
 
-      if (verifyData.matches) {
+      if (verifyData.matches && verifyData.documents_complete !== false) {
         const decisionRes = await fetch(`${BACKEND}/api/decision/evaluate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -575,9 +777,9 @@ function CallPageInner() {
             income: preapproval.monthly_income,
             requested_amount: preapproval.requested_loan_amount,
             eligible_amount: preapproval.eligible_amount,
-            kyc_status: kycResult.kyc_status,
+            kyc_status: verifyData.matches ? "VERIFIED" : "FAILED",
             document_status: "VERIFIED",
-            risk_flag: kycResult.risk_flag,
+            risk_flag: verifyData.selfie_match === false ? "HIGH_RISK" : "LOW_RISK",
           }),
         });
         if (!decisionRes.ok) throw new Error("Decision engine failed");
@@ -593,8 +795,10 @@ function CallPageInner() {
               schema_version: "2026-04",
               session_id: sessionIdRef.current,
               campaign_id: campaignId || undefined,
+              campaign_link: campaignLink || undefined,
               lead_id: leadId || undefined,
               source_channel: "video_call",
+              loan_type: preapproval.loan_type,
               phone: phone || undefined,
               room_url: roomUrl || undefined,
               transcript_text: transcriptText,
@@ -602,11 +806,19 @@ function CallPageInner() {
               extracted: {
                 ...preapproval,
                 aadhaar_photo_base64: verifyData.aadhaar_photo_base64 || null,
+                pan_photo_base64: verifyData.pan_photo_base64 || null,
                 blood_group: verifyData.blood_group || null,
+                selfie_match_score: verifyData.selfie_match_score || null,
+                selfie_match: verifyData.selfie_match || null,
+                pan_has_address: verifyData.pan_has_address || null,
+                required_documents: verifyData.required_documents || preapproval.document_requirements || [],
+                additional_documents: Object.entries(extraDocuments)
+                  .filter(([, file]) => Boolean(file))
+                  .map(([key, file]) => ({ key, filename: file?.name || "" })),
               },
               risk: {
-                kyc_status: kycResult.kyc_status,
-                risk_flag: kycResult.risk_flag,
+                kyc_status: verifyData.matches ? "VERIFIED" : "FAILED",
+                risk_flag: verifyData.selfie_match === false ? "HIGH_RISK" : "LOW_RISK",
                 document_verification: verifyData,
               },
               offer: {
@@ -619,13 +831,33 @@ function CallPageInner() {
               client_started_at: sessionStartedAtRef.current,
             }),
           });
+          sessionStorage.setItem(
+            "vericall_last_session",
+            JSON.stringify({
+              session_id: sessionIdRef.current,
+              campaign_id: campaignId || undefined,
+              campaign_link: campaignLink || undefined,
+              loan_type: preapproval.loan_type,
+              logged_at: new Date().toISOString(),
+              offer: {
+                status: decision.decision_status,
+                loan_amount: decision.final_approved_amount,
+              },
+              risk: {
+                risk_band: verifyData.selfie_match === false ? "HIGH" : "LOW",
+                risk_score: verifyData.selfie_match === false ? 80 : 20,
+              },
+            }),
+          );
         } catch {
           /* best effort */
         }
-        setJourneyStep("final");
         setPhase("offer");
       } else {
-        setAddressCheckError("Address mismatch found. Please upload documents with matching addresses.");
+        const missingMsg = (verifyData.missing_required_documents || []).length
+          ? ` Missing required documents: ${(verifyData.missing_required_documents || []).join(", ")}.`
+          : "";
+        setAddressCheckError(`Verification is incomplete.${missingMsg}`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unable to verify address right now.";
@@ -729,7 +961,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {(phase === "conversation" || phase === "analyzing" || phase === "kyc") && (
+          {(phase === "conversation" || phase === "analyzing") && (
             <div className="w-full max-w-2xl">
               <div className="relative rounded-2xl overflow-hidden glow-primary">
                 <video
@@ -784,23 +1016,18 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "upload-docs" && (
+          {phase === "kyc-upload" && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <div className="glass-card p-8">
-                <h2 className="text-xl font-semibold text-white mb-2 text-center">
-                  Upload Documents
-                </h2>
-                <p className="text-sm text-slate-400 mb-6 text-center">
-                  Please upload clear images of your Aadhaar, PAN card, and an Address Proof to complete the KYC process.
-                </p>
+                <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 2: Complete KYC</h2>
+                <p className="text-sm text-slate-400 mb-6 text-center">Upload Aadhaar and PAN to complete identity verification.</p>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Aadhaar Card (Front & Back)</label>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">Aadhaar Card</label>
                     <input
                       type="file"
                       accept="image/*,.pdf"
-                      multiple
-                      onChange={(e) => setAadhaarFile(e.target.files?.[0] || null)}
+                      onChange={(e) => setKycAadhaarFile(e.target.files?.[0] || null)}
                       className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
                     />
                   </div>
@@ -809,40 +1036,146 @@ function CallPageInner() {
                     <input
                       type="file"
                       accept="image/*,.pdf"
-                      onChange={(e) => setPanFile(e.target.files?.[0] || null)}
+                      onChange={(e) => setKycPanFile(e.target.files?.[0] || null)}
                       className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Address Proof</label>
-                    <p className="text-xs text-slate-400 mb-2 mt-[-4px]">E.g. Driver's License, Passport, or Utility Bill</p>
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      multiple
-                      onChange={(e) => setAddressFile(e.target.files?.[0] || null)}
-                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
-                    />
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    <div className="flex items-center justify-between gap-4 mb-3">
+                      <div>
+                        <p className="text-sm font-medium text-emerald-200">Live selfie capture</p>
+                        <p className="text-xs text-emerald-300/70">Captured automatically before camera shutdown.</p>
+                      </div>
+                      <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-200">
+                        {capturedSelfie ? "Captured" : "Missing"}
+                      </span>
+                    </div>
+                    {capturedSelfie ? (
+                      <img
+                        src={capturedSelfie}
+                        alt="Captured selfie"
+                        className="h-40 w-full rounded-xl object-cover border border-emerald-500/20"
+                      />
+                    ) : (
+                      <p className="text-xs text-amber-300">
+                        We could not capture your selfie in this run. Please restart the session.
+                      </p>
+                    )}
                   </div>
                 </div>
                 <button
-                  disabled={isUploadingDocs || !aadhaarFile || !panFile || !addressFile}
+                  disabled={isVerifyingKycDocs || !kycAadhaarFile || !kycPanFile || !capturedSelfie}
+                  className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    void handleVerifyKycDocuments();
+                  }}
+                >
+                  {isVerifyingKycDocs ? "Verifying KYC..." : "Verify KYC"}
+                </button>
+                {kycVerifyResult && (
+                  <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${kycVerifyResult.kyc_status === "VERIFIED" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200" : "bg-amber-500/10 border-amber-500/30 text-amber-200"}`}>
+                    <p className="font-medium">{kycVerifyResult.kyc_status === "VERIFIED" ? "KYC verified" : "KYC verification failed"}</p>
+                    <p className="mt-1 text-xs opacity-90">{kycVerifyResult.reason}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {phase === "preapproval-review" && preapproval && (
+            <div className="w-full max-w-md mx-auto space-y-4">
+              <div className="glass-card p-8">
+                <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 3: Pre-Approved Offer</h2>
+                <p className="text-sm text-slate-400 mb-6 text-center">Review and edit KYC details, then download the KYC review PDF.</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Applicant Name</label>
+                    <input value={editableKycData.applicant_name} onChange={(e) => setEditableKycData((p) => ({ ...p, applicant_name: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Aadhaar Number</label>
+                    <input value={editableKycData.aadhaar_number} onChange={(e) => setEditableKycData((p) => ({ ...p, aadhaar_number: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">PAN Number</label>
+                    <input value={editableKycData.pan_number} onChange={(e) => setEditableKycData((p) => ({ ...p, pan_number: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">DOB</label>
+                      <input value={editableKycData.dob} onChange={(e) => setEditableKycData((p) => ({ ...p, dob: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Gender</label>
+                      <input value={editableKycData.gender} onChange={(e) => setEditableKycData((p) => ({ ...p, gender: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-cyan-100">
+                  Pre-approved amount: INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}
+                </div>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <button
+                    disabled={isGeneratingKycPdf}
+                    className="btn-secondary"
+                    onClick={() => {
+                      void handleDownloadKycPdf();
+                    }}
+                  >
+                    {isGeneratingKycPdf ? "Generating..." : "Download KYC PDF"}
+                  </button>
+                  <button className="btn-primary" onClick={handleProceedAfterKycReview}>Next</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {phase === "loan-docs" && (
+            <div className="w-full max-w-md mx-auto space-y-4">
+              <div className="glass-card p-8">
+                <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 4: Loan Documents</h2>
+                <p className="text-sm text-slate-400 mb-6 text-center">Upload loan-type specific documents for {currentLoanLabel}.</p>
+                <div className="space-y-4">
+                  {loanDocumentRequirements.map((requirement) => {
+                    if (requirement.key === "address_proof") {
+                      return (
+                        <div key={requirement.key}>
+                          <label className="block text-sm font-medium text-slate-300 mb-2">{requirement.label}</label>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            onChange={(e) => setAddressFile(e.target.files?.[0] || null)}
+                            className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                          />
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={requirement.key} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                        <p className="text-sm font-medium text-slate-100 mb-2">{requirement.label}</p>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) =>
+                            setExtraDocuments((prev) => ({
+                              ...prev,
+                              [requirement.key]: e.target.files?.[0] || null,
+                            }))
+                          }
+                          className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  disabled={isUploadingDocs || !capturedSelfie || !addressFile}
                   className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => {
                     void handleDocumentSubmit();
                   }}
                 >
-                  {isUploadingDocs ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Uploading...
-                    </>
-                  ) : (
-                    "Submit Documents"
-                  )}
+                  {isUploadingDocs ? "Verifying Documents..." : "Submit Loan Documents"}
                 </button>
                 {addressCheck && (
                   <div
@@ -862,8 +1195,39 @@ function CallPageInner() {
                     <p className="mt-1 text-xs opacity-90">
                       Aadhaar: {addressCheck.aadhaar_number_valid ? "valid" : "invalid"} · PAN: {addressCheck.pan_number_valid ? "valid" : "invalid"}
                     </p>
+                    {addressCheck.pan_has_address != null && (
+                      <p className="mt-1 text-xs opacity-90">
+                        PAN address present: {addressCheck.pan_has_address ? "yes" : "no"}
+                      </p>
+                    )}
+                    {addressCheck.selfie_match_score != null && (
+                      <p className="mt-1 text-xs opacity-90">
+                        Selfie match score: {Math.round((addressCheck.selfie_match_score || 0) * 100)}%
+                        {addressCheck.selfie_match === false ? " · mismatch flagged" : ""}
+                      </p>
+                    )}
                     {addressCheck.blood_group && (
                       <p className="mt-1 text-xs opacity-90">Blood Group: {addressCheck.blood_group}</p>
+                    )}
+                    {addressCheck.required_documents?.length ? (
+                      <div className="mt-2">
+                        <p className="text-xs opacity-90 mb-1">Required documents</p>
+                        <ul className="space-y-1 text-xs opacity-90">
+                          {addressCheck.required_documents.map((doc) => (
+                            <li key={doc}>• {doc}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {addressCheck.documents_complete === false && (
+                      <div className="mt-2">
+                        <p className="text-xs opacity-90 mb-1">Missing required documents</p>
+                        <ul className="space-y-1 text-xs opacity-90">
+                          {(addressCheck.missing_required_documents || []).map((doc) => (
+                            <li key={doc}>• {doc}</li>
+                          ))}
+                        </ul>
+                      </div>
                     )}
                     {(addressCheck.proof_city || addressCheck.geo_city) && (
                       <p className="mt-1 text-xs opacity-90">
@@ -893,46 +1257,6 @@ function CallPageInner() {
               </div>
             </div>
           )}
-
-          {phase === "kyc" && preapproval && (
-            <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
-              <h2 className="text-xl font-semibold text-white">KYC Verification</h2>
-              <p className="text-sm text-slate-300">{preapproval.message}</p>
-              <p className="text-xs text-slate-400">KYC is identity-only: Aadhaar, PAN, and selfie match.</p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input
-                  value={aadhaarNumber}
-                  onChange={(e) => setAadhaarNumber(e.target.value)}
-                  placeholder="Aadhaar (12 digits)"
-                  className="px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-white"
-                />
-                <input
-                  value={panNumber}
-                  onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
-                  placeholder="PAN (ABCDE1234F)"
-                  className="px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-white"
-                />
-              </div>
-
-              {kycResult && (
-                <p className={`text-sm ${kycResult.kyc_status === "VERIFIED" ? "text-emerald-300" : "text-amber-300"}`}>
-                  KYC Status: {kycResult.kyc_status} | Face match: {Math.round((kycResult.face_match_score || 0) * 100)}%
-                </p>
-              )}
-
-              {journeyError && <p className="text-sm text-amber-300">{journeyError}</p>}
-
-              <button
-                onClick={handleVerifyKyc}
-                disabled={journeyLoading}
-                className="btn-primary w-full disabled:opacity-60"
-              >
-                {journeyLoading ? "Verifying KYC..." : "Verify KYC"}
-              </button>
-            </div>
-          )}
-
 
           {phase === "offer" && finalDecision && preapproval && (
             <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
@@ -1072,35 +1396,17 @@ function CallPageInner() {
             />
           )}
 
-          {phase === "kyc" && preapproval && (
-            <div className="flex h-full flex-col px-4 py-4 gap-4">
+          {phase === "kyc-upload" && (
+            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 2</p>
                 <h3 className="text-lg font-semibold text-white">KYC Verification</h3>
-                <p className="text-sm text-slate-400 mt-1">Identity only. No documents yet.</p>
+                <p className="text-sm text-slate-400 mt-1">Upload Aadhaar + PAN and validate against live selfie.</p>
               </div>
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Loan type</p>
-                <p className="text-sm text-white font-medium">{currentLoanLabel}</p>
-                <p className="text-xs text-slate-400">Pre-approved amount</p>
-                <p className="text-sm text-white font-medium">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
-                <p className="text-xs text-slate-400">Required next</p>
-                <p className="text-sm text-slate-200">Aadhaar, PAN, selfie</p>
-              </div>
-            </div>
-          )}
-
-          {phase === "upload-docs" && preapproval && (
-            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 3</p>
-                <h3 className="text-lg font-semibold text-white">Upload Documents</h3>
-                <p className="text-sm text-slate-400 mt-1">Required for all loans.</p>
-              </div>
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Mandatory documents</p>
+                <p className="text-xs text-slate-400">Required KYC documents</p>
                 <div className="space-y-2 pt-1">
-                  {["Aadhaar Card", "PAN Card", "One Address Proof"].map((doc) => (
+                  {["Aadhaar Card", "PAN Card", "Selfie from call"].map((doc) => (
                     <div key={doc} className="flex items-start gap-2 text-sm text-slate-200">
                       <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
                       <span>{doc}</span>
@@ -1111,10 +1417,47 @@ function CallPageInner() {
             </div>
           )}
 
+          {phase === "preapproval-review" && preapproval && (
+            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 3</p>
+                <h3 className="text-lg font-semibold text-white">Pre-Approved Offer</h3>
+                <p className="text-sm text-slate-400 mt-1">Review editable KYC data and download review PDF.</p>
+              </div>
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
+                <p className="text-xs text-slate-400">Loan type</p>
+                <p className="text-sm text-white font-medium">{currentLoanLabel}</p>
+                <p className="text-xs text-slate-400">Pre-approved amount</p>
+                <p className="text-sm text-white font-medium">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
+              </div>
+            </div>
+          )}
+
+          {phase === "loan-docs" && preapproval && (
+            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 4</p>
+                <h3 className="text-lg font-semibold text-white">Loan Document Check</h3>
+                <p className="text-sm text-slate-400 mt-1">Submit post-KYC documents for final approval.</p>
+              </div>
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
+                <p className="text-xs text-slate-400">Required documents for {currentLoanLabel}</p>
+                <div className="space-y-2 pt-1">
+                  {loanDocumentRequirements.map((doc) => (
+                    <div key={doc.key} className="flex items-start gap-2 text-sm text-slate-200">
+                      <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
+                      <span>{doc.label}{doc.required === false ? " (optional)" : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {phase === "offer" && finalDecision && preapproval && (
             <div className="flex h-full flex-col px-4 py-4 gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 4</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 5</p>
                 <h3 className="text-lg font-semibold text-white">Final Decision</h3>
                 <p className="text-sm text-slate-400 mt-1">Decision summary for {currentLoanLabel}.</p>
               </div>

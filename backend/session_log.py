@@ -29,6 +29,9 @@ def _ensure_db() -> None:
                 logged_at TEXT NOT NULL,
                 phone TEXT,
                 room_url TEXT,
+                campaign_id TEXT,
+                campaign_link TEXT,
+                loan_type TEXT,
                 risk_band TEXT,
                 risk_score INTEGER,
                 offer_status TEXT,
@@ -45,6 +48,18 @@ def _ensure_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_audit_sessions_offer ON audit_sessions(offer_status)"
         )
+        existing_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(audit_sessions)").fetchall()
+        }
+        migrations = [
+            ("campaign_id", "TEXT"),
+            ("campaign_link", "TEXT"),
+            ("loan_type", "TEXT"),
+        ]
+        for column_name, column_type in migrations:
+            if column_name not in existing_columns:
+                conn.execute(f"ALTER TABLE audit_sessions ADD COLUMN {column_name} {column_type}")
 
 
 def _append_jsonl(record: dict) -> None:
@@ -68,6 +83,7 @@ def append_session_record(payload: dict) -> str:
     risk_band = risk.get("risk_band")
     risk_score = risk.get("risk_score")
     offer_status = offer.get("status")
+    loan_type = record.get("loan_type") or (record.get("extracted") or {}).get("loan_type")
 
     with _lock:
         try:
@@ -76,12 +92,15 @@ def append_session_record(payload: dict) -> str:
                 conn.execute(
                     """
                     INSERT INTO audit_sessions (
-                        session_id, logged_at, phone, room_url, risk_band, risk_score, offer_status, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        session_id, logged_at, phone, room_url, campaign_id, campaign_link, loan_type, risk_band, risk_score, offer_status, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(session_id) DO UPDATE SET
                         logged_at = excluded.logged_at,
                         phone = excluded.phone,
                         room_url = excluded.room_url,
+                        campaign_id = excluded.campaign_id,
+                        campaign_link = excluded.campaign_link,
+                        loan_type = excluded.loan_type,
                         risk_band = excluded.risk_band,
                         risk_score = excluded.risk_score,
                         offer_status = excluded.offer_status,
@@ -92,6 +111,9 @@ def append_session_record(payload: dict) -> str:
                         record["logged_at"],
                         record.get("phone"),
                         record.get("room_url"),
+                        record.get("campaign_id"),
+                        record.get("campaign_link"),
+                        loan_type,
                         risk_band,
                         int(risk_score) if isinstance(risk_score, (int, float)) else None,
                         offer_status,

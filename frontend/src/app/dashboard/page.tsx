@@ -7,6 +7,9 @@ interface AuditSession {
   session_id?: string;
   logged_at?: string;
   phone?: string;
+  campaign_id?: string;
+  campaign_link?: string;
+  loan_type?: string;
   offer?: { status?: string; loan_amount?: number; monthly_emi?: number };
   risk?: { risk_band?: string; risk_score?: number; eligible?: boolean };
   bureau?: { bureau_score?: number; score_band?: string };
@@ -69,10 +72,14 @@ export default function DashboardPage() {
             <dl className="grid grid-cols-2 gap-2 text-sm text-slate-300">
               <dt className="text-slate-500">Status</dt>
               <dd>{lastLocal.offer?.status || "—"}</dd>
+              <dt className="text-slate-500">Campaign</dt>
+              <dd>{lastLocal.campaign_id || "—"}</dd>
               <dt className="text-slate-500">Risk</dt>
               <dd>
                 {lastLocal.risk?.risk_band} ({lastLocal.risk?.risk_score ?? "—"})
               </dd>
+              <dt className="text-slate-500">Loan type</dt>
+              <dd>{lastLocal.loan_type || "—"}</dd>
               <dt className="text-slate-500">Amount</dt>
               <dd>
                 {lastLocal.offer?.loan_amount != null
@@ -95,6 +102,7 @@ export default function DashboardPage() {
                 <tr className="border-b border-white/[0.06] text-xs uppercase text-slate-500">
                   <th className="px-4 py-3">Time</th>
                   <th className="px-4 py-3">Session</th>
+                  <th className="px-4 py-3">Campaign</th>
                   <th className="px-4 py-3">Risk</th>
                   <th className="px-4 py-3">Propensity</th>
                   <th className="px-4 py-3">Bureau</th>
@@ -104,7 +112,7 @@ export default function DashboardPage() {
               <tbody>
                 {sessions.length === 0 && !error && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                       No sessions logged yet. Complete a call to create an audit entry.
                     </td>
                   </tr>
@@ -116,6 +124,9 @@ export default function DashboardPage() {
                     </td>
                     <td className="px-4 py-3 font-mono text-xs truncate max-w-[140px]">
                       {s.session_id || "—"}
+                    </td>
+                    <td className="px-4 py-3 text-xs truncate max-w-[160px]">
+                      {s.campaign_id || s.campaign_link || "—"}
                     </td>
                     <td className="px-4 py-3">
                       {s.risk?.risk_band}

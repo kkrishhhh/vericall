@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { translations } from "@/lib/translations";
 import type { Language } from "@/lib/translations";
 
@@ -14,25 +14,18 @@ const LANGUAGES: { code: Language; label: string; native: string; icon: string }
 
 export default function LandingPage() {
   const [phone, setPhone] = useState("");
-  const [docType, setDocType] = useState<"Aadhaar" | "PAN">("Aadhaar");
-  const [docNumber, setDocNumber] = useState("");
   const [otp, setOtp] = useState("");
   const [step, setStep] = useState<"language" | "phone" | "otp">("language");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState<Language>("en");
+  const searchParams = useSearchParams();
   const router = useRouter();
+  const campaignId = searchParams.get("campaign_id") || "";
+  const campaignLink = searchParams.get("campaign_link") || (campaignId ? `${typeof window !== "undefined" ? window.location.origin : ""}/?campaign_id=${encodeURIComponent(campaignId)}` : "");
 
   const handleSendOtp = async () => {
-    if (docType === "Aadhaar" && !docNumber.match(/^\d{12}$/)) {
-      setError("Please enter a valid 12-digit Aadhaar number");
-      return;
-    }
-    if (docType === "PAN" && !docNumber.match(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i)) {
-      setError("Please enter a valid 10-character PAN number (e.g. ABCDE1234F)");
-      return;
-    }
     if (phone.length < 10) {
       setError("Please enter a valid 10-digit phone number");
       return;
@@ -88,7 +81,7 @@ export default function LandingPage() {
       const roomData = await roomRes.json();
 
       router.push(
-        `/call?room=${encodeURIComponent(roomData.room_url)}&phone=${encodeURIComponent(phone)}&lang=${selectedLanguage}`,
+        `/call?room=${encodeURIComponent(roomData.room_url)}&phone=${encodeURIComponent(phone)}&lang=${selectedLanguage}${campaignId ? `&campaign_id=${encodeURIComponent(campaignId)}` : ""}${campaignLink ? `&campaign_link=${encodeURIComponent(campaignLink)}` : ""}`,
       );
     } catch (err: any) {
       setError(err.message || "Unable to start session. Please try again.");
@@ -198,44 +191,14 @@ export default function LandingPage() {
               ))}
             </div>
 
+            {campaignId && (
+              <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-100">
+                Campaign link detected: {campaignId}
+              </div>
+            )}
+
             {step === "phone" ? (
               <>
-                {/* Document Selection */}
-                <div className="mb-4 flex flex-col sm:flex-row gap-4">
-                  <div className="sm:w-1/3">
-                    <label className="block text-sm font-medium text-slate-300 mb-2">{t.idType}</label>
-                    <select
-                      value={docType}
-                      onChange={(e) => {
-                        setDocType(e.target.value as "Aadhaar" | "PAN");
-                        setDocNumber("");
-                        setError("");
-                      }}
-                      className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm appearance-none"
-                    >
-                      <option value="Aadhaar" className="bg-slate-800">{t.aadhaar}</option>
-                      <option value="PAN" className="bg-slate-800">{t.panCard}</option>
-                    </select>
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      {docType === "Aadhaar" ? t.aadhaar : t.panCard} {t.docNumber}
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={docType === "Aadhaar" ? 12 : 10}
-                      value={docNumber}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setDocNumber(docType === "Aadhaar" ? val.replace(/\D/g, "") : val.toUpperCase());
-                        setError("");
-                      }}
-                      placeholder={docType === "Aadhaar" ? "0000 0000 0000" : "ABCDE1234F"}
-                      className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-sm tracking-wider"
-                    />
-                  </div>
-                </div>
-
                 {/* Phone Input */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-300 mb-2">

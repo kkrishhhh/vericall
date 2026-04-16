@@ -4,6 +4,7 @@ import os
 import re
 import json
 import base64
+from difflib import SequenceMatcher
 import httpx
 from groq import Groq
 
@@ -46,7 +47,7 @@ def _clean_b64(image_b64: str) -> str:
     return image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
 
 
-def _extract_face_crop_from_aadhaar(aadhaar_b64: str) -> str | None:
+def _extract_face_crop(image_b64: str) -> str | None:
     """
     Extract likely portrait area from Aadhaar using local face detection.
     Returns a data URL (base64 JPEG) or None.
@@ -58,7 +59,7 @@ def _extract_face_crop_from_aadhaar(aadhaar_b64: str) -> str | None:
         return None
 
     try:
-        image_bytes = base64.b64decode(aadhaar_b64)
+        image_bytes = base64.b64decode(image_b64)
         arr = np.frombuffer(image_bytes, dtype=np.uint8)
         image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if image is None:
@@ -133,8 +134,67 @@ def _field_consistent(values: list[str]) -> bool:
     return len(set(normalized)) == 1
 
 
+def _norm_name(s: str | None) -> str:
+    t = _norm_text(s)
+    if not t:
+        return ""
+    t = re.sub(r"[^A-Z\s]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    # Remove common honorifics and noise tokens from OCR.
+    stop_tokens = {"MR", "MRS", "MS", "SHRI", "SMT", "KUMARI"}
+    tokens = [tok for tok in t.split(" ") if tok and tok not in stop_tokens]
+    return " ".join(tokens)
+
+
+def _name_consistent(values: list[str]) -> bool:
+    names = [_norm_name(v) for v in values if _norm_name(v)]
+    if len(names) < 2:
+        return False
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            if a == b:
+                return True
+            ratio = SequenceMatcher(None, a, b).ratio()
+            # OCR-safe fuzzy threshold.
+            if ratio >= 0.74:
+                return True
+            # Token overlap fallback for reordered/partial names.
+            ta = set(a.split())
+            tb = set(b.split())
+            if ta and tb and len(ta.intersection(tb)) >= max(1, min(len(ta), len(tb)) - 1):
+                return True
+    return False
+
+
 def _norm_city(s: str | None) -> str:
-    return re.sub(r"[^A-Z]", "", _norm_text(s))
+    t = _norm_text(s)
+    t = t.replace(" SUBDISTRICT", "")
+    t = t.replace(" DISTRICT", "")
+    t = t.replace(" TALUKA", "")
+    t = t.replace(" TEHSIL", "")
+    return re.sub(r"[^A-Z]", "", t)
+
+
+def _city_match_loose(proof_city: str | None, geo_city: str | None) -> bool | None:
+    if not proof_city or not geo_city:
+        return None
+    p = _norm_city(proof_city)
+    g = _norm_city(geo_city)
+    if not p or not g:
+        return None
+    if p == g:
+        return True
+    if p in g or g in p:
+        return True
+    ratio = SequenceMatcher(None, p, g).ratio()
+    if ratio >= 0.72:
+        return True
+    # If reverse geocoder returns locality-level label (e.g., subdistrict), don't hard-fail.
+    raw_geo = _norm_text(geo_city)
+    if "SUBDISTRICT" in raw_geo or "TALUKA" in raw_geo or "TEHSIL" in raw_geo:
+        return None
+    return False
 
 
 def _reverse_geocode_city(latitude: float | None, longitude: float | None) -> str | None:
@@ -193,10 +253,191 @@ def _is_valid_pan(number: str | None) -> bool:
     return _PAN_RE.fullmatch(compact) is not None
 
 
+def verify_kyc_documents(
+    aadhaar_b64: str,
+    pan_b64: str,
+    selfie_b64: str | None = None,
+) -> dict:
+    """Verify KYC identity from Aadhaar + PAN (+ optional selfie) before loan document stage."""
+    prompt = """You are a strict KYC OCR checker.
+You will get 2 images in this exact order:
+1) Aadhaar
+2) PAN
+
+TASK:
+1) Extract name, dob, gender from both docs when visible.
+2) Extract aadhaar_number and pan_number.
+3) Return strict JSON only.
+
+JSON schema:
+{
+  "aadhaar": {"name": "...", "dob": "...", "gender": "...", "aadhaar_number": "..."},
+  "pan": {"name": "...", "dob": "...", "gender": "...", "pan_number": "..."}
+}
+Use null for unknown fields."""
+
+    aadhaar_b64 = _clean_b64(aadhaar_b64)
+    pan_b64 = _clean_b64(pan_b64)
+    selfie_b64 = _clean_b64(selfie_b64) if selfie_b64 else None
+    aadhaar_photo_base64 = _extract_face_crop(aadhaar_b64)
+    pan_photo_base64 = _extract_face_crop(pan_b64)
+
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{aadhaar_b64}"}},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{pan_b64}"}},
+        ],
+    }]
+
+    try:
+        response = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=messages,
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(response.choices[0].message.content)
+        aadhaar = data.get("aadhaar") or {}
+        pan = data.get("pan") or {}
+
+        name_match = _name_consistent([
+            _norm_text(aadhaar.get("name")),
+            _norm_text(pan.get("name")),
+        ])
+        dob_match = _field_consistent([
+            _norm_dob(aadhaar.get("dob")),
+            _norm_dob(pan.get("dob")),
+        ])
+        gender_match = _field_consistent([
+            _norm_gender(aadhaar.get("gender")),
+            _norm_gender(pan.get("gender")),
+        ])
+
+        aadhaar_number_valid = _is_valid_aadhaar(aadhaar.get("aadhaar_number"))
+        pan_number_valid = _is_valid_pan(pan.get("pan_number"))
+
+        selfie_match_score: float | None = None
+        selfie_match: bool | None = None
+        face_scores: list[float] = []
+        face_verified = False
+        if selfie_b64 and aadhaar_photo_base64:
+            try:
+                from deepface import DeepFace  # type: ignore
+
+                compare = DeepFace.verify(
+                    img1_path=aadhaar_photo_base64,
+                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                    enforce_detection=False,
+                )
+                distance = compare.get("distance")
+                if isinstance(distance, (int, float)):
+                    score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
+                    face_scores.append(score)
+                    face_verified = face_verified or bool(compare.get("verified"))
+            except Exception:
+                pass
+
+        if selfie_b64 and pan_photo_base64:
+            try:
+                from deepface import DeepFace  # type: ignore
+
+                compare = DeepFace.verify(
+                    img1_path=pan_photo_base64,
+                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                    enforce_detection=False,
+                )
+                distance = compare.get("distance")
+                if isinstance(distance, (int, float)):
+                    score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
+                    face_scores.append(score)
+                    face_verified = face_verified or bool(compare.get("verified"))
+            except Exception:
+                pass
+
+        if face_scores:
+            selfie_match_score = max(face_scores)
+            # DeepFace "verified" can be strict in real webcam lighting; use score fallback.
+            selfie_match = face_verified or selfie_match_score >= 0.55
+        elif selfie_b64:
+            selfie_match_score = None
+            selfie_match = None
+
+        hard_fail = [
+            not aadhaar_number_valid,
+            not pan_number_valid,
+            not dob_match,
+            not gender_match,
+            (
+                selfie_b64 is not None
+                and selfie_match is False
+                and (selfie_match_score is not None and selfie_match_score < 0.35)
+            ),
+        ]
+        verified = not any(hard_fail)
+
+        issues = []
+        if not aadhaar_number_valid:
+            issues.append("invalid Aadhaar number")
+        if not pan_number_valid:
+            issues.append("invalid PAN number")
+        if not dob_match:
+            issues.append("DOB mismatch")
+        if not gender_match:
+            issues.append("gender mismatch")
+        if selfie_b64 is not None and selfie_match is False:
+            if selfie_match_score is not None and selfie_match_score < 0.35:
+                issues.append("selfie does not match document photo")
+            else:
+                issues.append("selfie match borderline (manual review advised)")
+        elif selfie_b64 is not None and selfie_match is None:
+            issues.append("selfie face check unavailable (manual review advised)")
+        if not name_match:
+            issues.append("name mismatch (warning)")
+
+        reason = "KYC documents verified." if verified else (", ".join(issues) or "KYC verification failed")
+
+        return {
+            "kyc_status": "VERIFIED" if verified else "FAILED",
+            "reason": reason,
+            "name_match": name_match,
+            "dob_match": dob_match,
+            "gender_match": gender_match,
+            "aadhaar_number_valid": aadhaar_number_valid,
+            "pan_number_valid": pan_number_valid,
+            "selfie_match_score": selfie_match_score,
+            "selfie_match": selfie_match,
+            "aadhaar_photo_base64": aadhaar_photo_base64,
+            "extracted": {
+                "aadhaar": aadhaar,
+                "pan": pan,
+            },
+        }
+    except Exception as e:
+        msg = str(e)
+        return {
+            "kyc_status": "FAILED",
+            "reason": f"KYC verification failed: {msg}",
+            "name_match": False,
+            "dob_match": False,
+            "gender_match": False,
+            "aadhaar_number_valid": False,
+            "pan_number_valid": False,
+            "selfie_match_score": None,
+            "selfie_match": None,
+            "aadhaar_photo_base64": None,
+            "extracted": {},
+        }
+
+
 def verify_address_match(
     aadhaar_b64: str,
     pan_b64: str,
     proof_b64: str,
+    selfie_b64: str | None = None,
+    required_documents: list[str] | None = None,
+    uploaded_documents: list[str] | None = None,
     latitude: float | None = None,
     longitude: float | None = None,
 ) -> dict:
@@ -212,12 +453,13 @@ TASK:
 2) Extract blood_group if present in any doc.
 3) Extract aadhaar_number and pan_number if present.
 4) Extract full address from Aadhaar and Address Proof and compare whether same physical location.
-5) Return strict JSON only.
+5) Note whether the PAN card itself visibly carries an address.
+6) Return strict JSON only.
 
 JSON schema:
 {
   "aadhaar": {"name": "...", "dob": "...", "gender": "...", "blood_group": "...", "aadhaar_number": "...", "address": "..."},
-  "pan": {"name": "...", "dob": "...", "gender": "...", "pan_number": "..."},
+    "pan": {"name": "...", "dob": "...", "gender": "...", "pan_number": "...", "address": "...", "has_address": false},
   "address_proof": {"name": "...", "dob": "...", "gender": "...", "blood_group": "...", "address": "...", "city": "..."},
   "address_match": true,
   "address_reason": "short reason"
@@ -227,7 +469,9 @@ Use null for unknown fields."""
     aadhaar_b64 = _clean_b64(aadhaar_b64)
     pan_b64 = _clean_b64(pan_b64)
     proof_b64 = _clean_b64(proof_b64)
-    aadhaar_photo_base64 = _extract_face_crop_from_aadhaar(aadhaar_b64)
+    selfie_b64 = _clean_b64(selfie_b64) if selfie_b64 else None
+    aadhaar_photo_base64 = _extract_face_crop(aadhaar_b64)
+    pan_photo_base64 = _extract_face_crop(pan_b64)
 
     messages = [{
         "role": "user",
@@ -252,7 +496,7 @@ Use null for unknown fields."""
         pan = data.get("pan") or {}
         address_proof = data.get("address_proof") or {}
 
-        name_match = _field_consistent([
+        name_match = _name_consistent([
             _norm_text(aadhaar.get("name")),
             _norm_text(pan.get("name")),
             _norm_text(address_proof.get("name")),
@@ -277,29 +521,64 @@ Use null for unknown fields."""
         pan_number = pan.get("pan_number")
         aadhaar_number_valid = _is_valid_aadhaar(aadhaar_number)
         pan_number_valid = _is_valid_pan(pan_number)
+        pan_has_address = bool(pan.get("has_address")) or bool(_norm_text(pan.get("address")))
+
+        selfie_match_score: float | None = None
+        selfie_match: bool | None = None
+        if selfie_b64 and aadhaar_photo_base64:
+            try:
+                from deepface import DeepFace  # type: ignore
+
+                compare = DeepFace.verify(
+                    img1_path=aadhaar_photo_base64,
+                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                    enforce_detection=False,
+                )
+                distance = compare.get("distance")
+                if isinstance(distance, (int, float)):
+                    selfie_match_score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
+                    selfie_match = bool(compare.get("verified"))
+            except Exception:
+                selfie_match_score = None
+                selfie_match = None
+
+        if selfie_match_score is None and selfie_b64 and pan_photo_base64:
+            try:
+                from deepface import DeepFace  # type: ignore
+
+                compare = DeepFace.verify(
+                    img1_path=pan_photo_base64,
+                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                    enforce_detection=False,
+                )
+                distance = compare.get("distance")
+                if isinstance(distance, (int, float)):
+                    selfie_match_score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
+                    selfie_match = bool(compare.get("verified"))
+            except Exception:
+                selfie_match_score = None
+                selfie_match = None
 
         address_match = bool(data.get("address_match"))
         address_reason = str(data.get("address_reason") or "").strip() or "Address match status unavailable."
         proof_city = address_proof.get("city")
         geo_city = _reverse_geocode_city(latitude, longitude)
-        city_match: bool | None = None
-        if proof_city and geo_city:
-            city_match = _norm_city(proof_city) == _norm_city(geo_city)
+        city_match = _city_match_loose(proof_city, geo_city)
 
         overall_ok = all([
             address_match,
-            name_match,
             dob_match,
             gender_match,
             aadhaar_number_valid,
             pan_number_valid,
-            city_match is not False,
+            (not selfie_b64) or selfie_match is True,
         ])
         failed_checks = []
+        warning_checks = []
         if not address_match:
             failed_checks.append("address mismatch")
         if not name_match:
-            failed_checks.append("name mismatch")
+            warning_checks.append("name mismatch")
         if not dob_match:
             failed_checks.append("dob mismatch")
         if not gender_match:
@@ -309,11 +588,30 @@ Use null for unknown fields."""
         if not pan_number_valid:
             failed_checks.append("invalid PAN number")
         if city_match is False:
-            failed_checks.append("current location city does not match address proof city")
+            warning_checks.append("current location city does not match address proof city")
+        if selfie_b64 and selfie_match is not True:
+            failed_checks.append("selfie does not match document photo")
 
         reason = "All document checks passed."
         if failed_checks:
             reason = f"{address_reason} Additional issues: {', '.join(failed_checks)}."
+        elif warning_checks:
+            reason = f"{address_reason} Warning: {', '.join(warning_checks)}."
+
+        policy_required_documents = ["Aadhaar card", "PAN card", "Live selfie capture"]
+        if not pan_has_address:
+            policy_required_documents.append("Address proof or utility bill")
+
+        required_keys = {x.strip().lower() for x in (required_documents or []) if isinstance(x, str) and x.strip()}
+        uploaded_keys = {x.strip().lower() for x in (uploaded_documents or []) if isinstance(x, str) and x.strip()}
+        missing_required_documents = sorted(required_keys - uploaded_keys)
+        documents_complete = len(missing_required_documents) == 0
+
+        if not documents_complete:
+            failed_checks.append(
+                "missing required documents: " + ", ".join(missing_required_documents)
+            )
+            overall_ok = False
 
         return {
             "aadhaar_address": aadhaar.get("address"),
@@ -330,12 +628,22 @@ Use null for unknown fields."""
             "geo_city": geo_city,
             "city_match": city_match,
             "aadhaar_photo_base64": aadhaar_photo_base64,
+            "pan_photo_base64": pan_photo_base64,
+            "selfie_match_score": selfie_match_score,
+            "selfie_match": selfie_match,
+            "pan_has_address": pan_has_address,
+            "required_documents": policy_required_documents,
+            "documents_complete": documents_complete,
+            "missing_required_documents": missing_required_documents,
             "extracted": {
                 "aadhaar": aadhaar,
                 "pan": pan,
                 "address_proof": address_proof,
                 "address_match": address_match,
                 "address_reason": address_reason,
+                "pan_has_address": pan_has_address,
+                "required_documents": sorted(required_keys),
+                "uploaded_documents": sorted(uploaded_keys),
                 "geo": {
                     "latitude": latitude,
                     "longitude": longitude,
@@ -367,5 +675,12 @@ Use null for unknown fields."""
             "geo_city": None,
             "city_match": None,
             "aadhaar_photo_base64": None,
+            "pan_photo_base64": None,
+            "selfie_match_score": None,
+            "selfie_match": None,
+            "pan_has_address": None,
+            "required_documents": [],
+            "documents_complete": False,
+            "missing_required_documents": [],
             "extracted": {},
         }

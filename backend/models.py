@@ -146,8 +146,10 @@ class SessionAuditPayload(BaseModel):
     schema_version: str = Field("2026-04", description="Versioned audit schema for downstream consumers")
     session_id: Optional[str] = None
     campaign_id: Optional[str] = None
+    campaign_link: Optional[str] = None
     lead_id: Optional[str] = None
     source_channel: str = Field("video_call", description="Acquisition/source channel")
+    loan_type: Optional[str] = None
     phone: Optional[str] = None
     room_url: Optional[str] = None
     transcript_text: str = Field("", description="Full or summarized transcript")
@@ -199,12 +201,15 @@ class VerifyAddressRequest(BaseModel):
     aadhaar_image: str = Field(..., description="Base64 encoded string of the Aadhaar Card image")
     pan_image: str = Field(..., description="Base64 encoded string of the PAN card image")
     address_proof_image: str = Field(..., description="Base64 encoded string of the Address Proof image")
+    selfie_image: Optional[str] = Field(None, description="Base64 encoded selfie captured from the video call")
+    required_documents: list[str] = Field(default_factory=list, description="Loan-type required document keys")
+    uploaded_documents: list[str] = Field(default_factory=list, description="Document keys uploaded in this step")
     latitude: Optional[float] = Field(None, description="Current user latitude from browser geolocation")
     longitude: Optional[float] = Field(None, description="Current user longitude from browser geolocation")
 
 class VerifyAddressResponse(BaseModel):
-    aadhaar_address: str = Field(None, description="The formatted Address extracted from Aadhaar Card")
-    proof_address: str = Field(None, description="The formatted Address extracted from the Address Proof")
+    aadhaar_address: Optional[str] = Field(None, description="The formatted Address extracted from Aadhaar Card")
+    proof_address: Optional[str] = Field(None, description="The formatted Address extracted from the Address Proof")
     matches: bool = Field(..., description="True if the addresses semantically match")
     reason: str = Field(..., description="Reasoning for the match or mismatch from the AI OCR model")
     name_match: bool = Field(False, description="True if name is consistent across documents")
@@ -217,6 +222,13 @@ class VerifyAddressResponse(BaseModel):
     geo_city: Optional[str] = Field(None, description="City resolved from current geolocation")
     city_match: Optional[bool] = Field(None, description="True if geolocation city matches proof city")
     aadhaar_photo_base64: Optional[str] = Field(None, description="Extracted Aadhaar profile photo as data URL")
+    pan_photo_base64: Optional[str] = Field(None, description="Extracted PAN profile photo as data URL")
+    selfie_match_score: Optional[float] = Field(None, description="0-1 face match score between selfie and document photo")
+    selfie_match: Optional[bool] = Field(None, description="True when selfie face matches the document photo")
+    pan_has_address: Optional[bool] = Field(None, description="True if PAN card appears to carry an address")
+    required_documents: list[str] = Field(default_factory=list)
+    documents_complete: bool = Field(True, description="True when all required documents were uploaded")
+    missing_required_documents: list[str] = Field(default_factory=list)
     extracted: dict = Field(default_factory=dict, description="Raw extracted fields by document")
 
 
@@ -241,6 +253,8 @@ class InterviewPreapprovalResponse(BaseModel):
     eligible_min: float
     eligible_max: float
     eligible_amount: float
+    document_requirements: list[dict] = Field(default_factory=list)
+    policy_summary: dict = Field(default_factory=dict)
     message: str
 
 
@@ -259,6 +273,38 @@ class KycVerifyResponse(BaseModel):
     selfie_captured: bool = False
     face_match_score: float = 0.0
     risk_flag: str = "LOW_RISK"
+
+
+class KycDocumentsVerifyRequest(BaseModel):
+    aadhaar_image: str = Field(..., description="Base64 Aadhaar image")
+    pan_image: str = Field(..., description="Base64 PAN image")
+    selfie_image: Optional[str] = Field(None, description="Base64 selfie captured from video call")
+
+
+class KycDocumentsVerifyResponse(BaseModel):
+    kyc_status: str
+    reason: str = ""
+    name_match: bool = False
+    dob_match: bool = False
+    gender_match: bool = False
+    aadhaar_number_valid: bool = False
+    pan_number_valid: bool = False
+    selfie_match_score: Optional[float] = None
+    selfie_match: Optional[bool] = None
+    aadhaar_photo_base64: Optional[str] = None
+    extracted: dict = Field(default_factory=dict)
+
+
+class KycReviewPdfRequest(BaseModel):
+    applicant_name: str = ""
+    aadhaar_number: str = ""
+    pan_number: str = ""
+    dob: str = ""
+    gender: str = ""
+    loan_type: str = ""
+    preapproved_amount: float = 0.0
+    selfie_image: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class DocumentRequirementsResponse(BaseModel):

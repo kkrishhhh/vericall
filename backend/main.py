@@ -20,6 +20,8 @@ from models import (
     VerifyAddressRequest, VerifyAddressResponse,
     InterviewProfileRequest, InterviewPreapprovalResponse,
     KycVerifyRequest, KycVerifyResponse,
+    KycDocumentsVerifyRequest, KycDocumentsVerifyResponse,
+    KycReviewPdfRequest,
     DecisionRequest, DecisionResponse,
 )
 from agent import run_agent
@@ -28,10 +30,10 @@ from fraud import assess_risk
 from offer import generate_offer
 from session_log import append_session_record, read_recent_sessions, read_session_by_id
 from extraction import extract_profile_from_text
-from services.document_match import verify_address_match
+from services.document_match import verify_address_match, verify_kyc_documents
 from services.document_builder import build_document_pack
 from services.document_templates import render_application_form_html
-from services.document_pdf import render_application_form_pdf
+from services.document_pdf import render_application_form_pdf, render_kyc_review_pdf
 from services.journey_core import (
     compute_preapproval,
     verify_kyc,
@@ -375,12 +377,41 @@ async def verify_address_endpoint(req: VerifyAddressRequest):
             req.aadhaar_image,
             req.pan_image,
             req.address_proof_image,
+            req.selfie_image,
+            req.required_documents,
+            req.uploaded_documents,
             req.latitude,
             req.longitude,
         )
         return VerifyAddressResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Address verification failed: {str(e)}")
+
+
+@app.post("/api/kyc/verify-documents", response_model=KycDocumentsVerifyResponse)
+async def kyc_verify_documents_endpoint(req: KycDocumentsVerifyRequest):
+    """Verify Aadhaar + PAN (+ selfie) before pre-approval review."""
+    try:
+        result = verify_kyc_documents(
+            req.aadhaar_image,
+            req.pan_image,
+            req.selfie_image,
+        )
+        return KycDocumentsVerifyResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"KYC document verification failed: {str(e)}")
+
+
+@app.post("/api/kyc/review-pdf")
+async def kyc_review_pdf_endpoint(req: KycReviewPdfRequest):
+    """Generate downloadable KYC review PDF from customer-edited details."""
+    try:
+        pdf_bytes = render_kyc_review_pdf(req.model_dump())
+        sid = req.session_id or "kyc-review"
+        headers = {"Content-Disposition": f'attachment; filename="{sid}.pdf"'}
+        return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers=headers)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"KYC review PDF generation failed: {str(e)}")
 
 
 # ── 10. NBFC Modular Loan Journey ───────────────────────────
