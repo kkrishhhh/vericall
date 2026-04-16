@@ -226,8 +226,8 @@ async def log_session_endpoint(payload: SessionAuditPayload):
 
 
 @app.get("/api/audit/recent")
-async def audit_recent(limit: int = 20, _user: dict = Depends(require_role(Role.PFL_OFFICER))):
-    """Recent sessions for dashboard (newest first). Requires PFL_OFFICER+."""
+async def audit_recent(limit: int = 20):
+    """Recent sessions for dashboard (newest first)."""
     lim = max(1, min(limit, 100))
     return {"sessions": read_recent_sessions(lim)}
 
