@@ -1,17 +1,31 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Plus_Jakarta_Sans, Playfair_Display, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  variable: "--font-jakarta",
+  weight: ["300", "400", "500", "600", "700", "800"],
+});
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-playfair",
+  weight: ["400", "500", "600", "700", "800", "900"],
+  style: ["normal", "italic"],
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "VeriCall — AI Video Loan Origination | Poonawalla Fincorp",
+  title: "VANTAGE — AI Video KYC | Poonawalla Fincorp",
   description:
-    "Apply for a loan in under 5 minutes through a live AI-powered video call. Real-time KYC, age verification, and instant pre-approval — powered by Poonawalla Fincorp.",
-  keywords: "loan, AI, video call, KYC, Poonawalla Fincorp, VeriCall, digital lending",
+    "Complete your KYC in 5 minutes through a live AI-powered video call. RBI V-CIP compliant. Multilingual support in English, Hindi & Marathi.",
+  keywords: "KYC, Video KYC, Poonawalla Fincorp, AI, loan, RBI, VANTAGE, V-CIP",
 };
 
 export default function RootLayout({
@@ -20,8 +34,25 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} antialiased`}>{children}</body>
+    <html
+      lang="en"
+      className={`${jakarta.variable} ${playfair.variable} ${jetbrains.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Prevent FOUC: set theme from localStorage before paint */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                var t = localStorage.getItem('vantage-theme');
+                if (t === 'dark') document.documentElement.classList.add('dark');
+              } catch(e) {}
+            `,
+          }}
+        />
+      </head>
+      <body className={`${jakarta.className} antialiased`}>{children}</body>
     </html>
   );
 }
