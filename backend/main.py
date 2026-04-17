@@ -3,8 +3,14 @@
 import os
 import time
 import logging
+import random
+import secrets
+import asyncio
+import smtplib
+import ssl
 import httpx
 from fastapi import FastAPI, HTTPException, Depends
+from email.message import EmailMessage
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -22,6 +28,7 @@ from models import (
     SessionAuditPayload, SessionAuditResponse,
     ExtractRequest, ExtractedProfile,
     SendOTPRequest, VerifyOTPRequest,
+    VideoKycRequestCreate, VideoKycOtpVerifyRequest,
     VerifyAddressRequest, VerifyAddressResponse,
     InterviewProfileRequest, InterviewPreapprovalResponse,
     KycVerifyRequest, KycVerifyResponse,
@@ -349,6 +356,28 @@ async def extract_endpoint(req: ExtractRequest):
 # ── 9. Simulated OTP ────────────────────────────────────────
 
 otp_store = {}
+video_kyc_link_store: dict[str, dict] = {}
+
+
+def _cleanup_video_kyc_links() -> None:
+    now = time.time()
+    expired_tokens = [
+        token for token, record in video_kyc_link_store.items()
+        if now > float(record.get("link_expires_at", 0))
+    ]
+    for token in expired_tokens:
+        video_kyc_link_store.pop(token, None)
+
+
+def _normalized_mobile(mobile_number: str) -> str:
+    digits = "".join(ch for ch in mobile_number if ch.isdigit())
+    if len(digits) == 10:
+        return f"+91{digits}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+    if mobile_number.startswith("+"):
+        return mobile_number
+    return f"+{digits}" if digits else mobile_number
 
 @app.post("/api/send-otp")
 async def send_otp(req: SendOTPRequest):
@@ -394,6 +423,161 @@ async def verify_otp(req: VerifyOTPRequest):
         return {"status": "success", "message": "KYC Verified Successfully"}
         
     raise HTTPException(status_code=400, detail="Invalid OTP")
+
+
+@app.post("/api/video-kyc/request")
+async def request_video_kyc_link(req: VideoKycRequestCreate):
+    """Create a unique KYC link + OTP and email it via Brevo SMTP."""
+    _cleanup_video_kyc_links()
+
+    if not req.consent_accepted:
+        raise HTTPException(status_code=400, detail="Consent is required before requesting Video KYC")
+
+    smtp_user = (os.environ.get("BREVO_USER") or os.environ.get("BREVO_SMTP_USER") or "").strip()
+    smtp_pass = (os.environ.get("BREVO_PASS") or os.environ.get("BREVO_SMTP_PASS") or "").strip()
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(
+            status_code=500,
+            detail="Brevo SMTP credentials are not configured (set BREVO_USER and BREVO_PASS)",
+        )
+
+    sender_email = (os.environ.get("BREVO_SENDER_EMAIL") or smtp_user).strip()
+    if not sender_email:
+        raise HTTPException(status_code=500, detail="Brevo sender email is not configured")
+    sender_name = (os.environ.get("BREVO_SENDER_NAME") or "Vantage team").strip()
+
+    token = secrets.token_urlsafe(24)
+    otp = f"{random.randint(100000, 999999)}"
+    now = time.time()
+    otp_expires_at = now + (10 * 60)
+    link_expires_at = now + (24 * 60 * 60)
+
+    frontend_base = (os.environ.get("FRONTEND_BASE_URL") or "http://localhost:3000").rstrip("/")
+    params = [f"kyc_token={token}", f"lang={req.language or 'en'}"]
+    if req.campaign_id:
+        params.append(f"campaign_id={req.campaign_id}")
+    kyc_link = f"{frontend_base}/call?{'&'.join(params)}"
+
+    email_text = (
+        f"Hello {req.full_name},\n\n"
+        "Thank you for requesting Video KYC verification.\n\n"
+        "To begin your KYC process, please click the link below:\n\n"
+        "👉 Start Video KYC:\n"
+        f"{kyc_link}\n\n"
+        "Your OTP:\n"
+        f"{otp}\n\n"
+        "This OTP is valid for 10 minutes.\n\n"
+        "Important Information:\n"
+        "This KYC link is valid for 24 hours\n"
+        "Do not share this link or OTP with anyone\n"
+        "Please ensure you are in a well-lit environment for video verification.\n\n"
+        "Regards,\n"
+        "Vantage team."
+    )
+
+    email_html = (
+        f"<p>Hello {req.full_name},</p>"
+        "<p>Thank you for requesting Video KYC verification.</p>"
+        "<p>To begin your KYC process, please click the link below:</p>"
+        f"<p><strong>👉 Start Video KYC:</strong><br/><a href=\"{kyc_link}\">{kyc_link}</a></p>"
+        f"<p><strong>Your OTP:</strong><br/>{otp}</p>"
+        "<p>This OTP is valid for 10 minutes.</p>"
+        "<p><strong>Important Information:</strong><br/>"
+        "This KYC link is valid for 24 hours<br/>"
+        "Do not share this link or OTP with anyone<br/>"
+        "Please ensure you are in a well-lit environment for video verification.</p>"
+        "<p>Regards,<br/>Vantage team.</p>"
+    )
+
+    message = EmailMessage()
+    message["From"] = f"{sender_name} <{sender_email}>"
+    message["To"] = req.email
+    message["Subject"] = "Your Video KYC Link and OTP"
+    message.set_content(email_text)
+    message.add_alternative(email_html, subtype="html")
+
+    smtp_host = (os.environ.get("BREVO_SMTP_HOST") or "smtp-relay.brevo.com").strip()
+    smtp_port = int((os.environ.get("BREVO_SMTP_PORT") or "587").strip())
+
+    def _send_via_smtp() -> None:
+        context = ssl.create_default_context()
+        ports_to_try = [smtp_port] + [p for p in (587, 465) if p != smtp_port]
+        last_error: Exception | None = None
+        for port in ports_to_try:
+            try:
+                if port == 465:
+                    with smtplib.SMTP_SSL(smtp_host, port, timeout=20, context=context) as server:
+                        server.login(smtp_user, smtp_pass)
+                        server.send_message(message)
+                        return
+                with smtplib.SMTP(smtp_host, port, timeout=20) as server:
+                    server.starttls(context=context)
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(message)
+                    return
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+
+    try:
+        await asyncio.to_thread(_send_via_smtp)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Brevo SMTP send failed: {str(e)}")
+
+    video_kyc_link_store[token] = {
+        "full_name": req.full_name,
+        "email": req.email,
+        "mobile_number": _normalized_mobile(req.mobile_number),
+        "language": req.language or "en",
+        "campaign_id": req.campaign_id,
+        "otp": otp,
+        "otp_expires_at": otp_expires_at,
+        "link_expires_at": link_expires_at,
+        "created_at": now,
+        "otp_verified": False,
+    }
+
+    return {
+        "status": "success",
+        "message": "Video KYC link sent to customer email",
+        "link_valid_for_hours": 24,
+        "otp_valid_for_minutes": 10,
+    }
+
+
+@app.post("/api/video-kyc/verify-otp")
+async def verify_video_kyc_otp(req: VideoKycOtpVerifyRequest):
+    """Verify OTP for a unique KYC link."""
+    _cleanup_video_kyc_links()
+    record = video_kyc_link_store.get(req.token)
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired KYC link")
+
+    now = time.time()
+    if now > float(record.get("link_expires_at", 0)):
+        video_kyc_link_store.pop(req.token, None)
+        raise HTTPException(status_code=400, detail="KYC link expired")
+
+    if now > float(record.get("otp_expires_at", 0)):
+        raise HTTPException(status_code=400, detail="OTP expired")
+
+    if record.get("otp") != req.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    record["otp_verified"] = True
+    record["otp_verified_at"] = now
+    video_kyc_link_store[req.token] = record
+
+    return {
+        "status": "success",
+        "message": "OTP verified successfully",
+        "full_name": record.get("full_name", ""),
+        "mobile_number": record.get("mobile_number", ""),
+        "language": record.get("language", "en"),
+        "campaign_id": record.get("campaign_id", ""),
+    }
 
 
 # ── 10. Document Address Matching ────────────────────────────

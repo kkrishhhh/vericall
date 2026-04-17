@@ -9,6 +9,11 @@ import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 
 const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
+const LANGUAGE_OPTIONS: { code: Language; label: string; native: string }[] = [
+  { code: "en", label: "English", native: "English" },
+  { code: "hi", label: "Hindi", native: "हिंदी" },
+  { code: "mr", label: "Marathi", native: "मराठी" },
+];
 
 interface Message {
   role: "user" | "agent";
@@ -105,9 +110,12 @@ function CallPageInner() {
   const campaignId = searchParams.get("campaign_id") || "";
   const campaignLink = searchParams.get("campaign_link") || "";
   const leadId = searchParams.get("lead_id") || "";
-  const lang = searchParams.get("lang") || "en";
-
-  const t = translations[lang as Language] || translations.en;
+  const kycToken = searchParams.get("kyc_token") || "";
+  const initialLang = searchParams.get("lang") || "en";
+  const [activeLanguage, setActiveLanguage] = useState<Language>(
+    (["en", "hi", "mr"].includes(initialLang) ? initialLang : "en") as Language
+  );
+  const t = translations[activeLanguage] || translations.en;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -115,6 +123,12 @@ function CallPageInner() {
   const pendingTranscriptRef = useRef<string>("");
 
   const [phase, setPhase] = useState<CallPhase>("connecting");
+  const [isOtpVerified, setIsOtpVerified] = useState(!kycToken);
+  const [isLanguageConfirmed, setIsLanguageConfirmed] = useState(!kycToken);
+  const [otpInput, setOtpInput] = useState("");
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpError, setOtpError] = useState("");
+  const [verifiedSession, setVerifiedSession] = useState<{ full_name: string; mobile_number: string; language: string } | null>(null);
   /** Set when getUserMedia succeeds — drives video element + STT (refs miss first paint while still on "connecting"). */
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -198,6 +212,7 @@ function CallPageInner() {
     "http://127.0.0.1:8000",
   ]);
   const BACKEND = backendCandidates[0] || "http://127.0.0.1:8001";
+  const effectivePhone = verifiedSession?.mobile_number || phone;
 
   const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
     const controller = new AbortController();
@@ -244,6 +259,46 @@ function CallPageInner() {
       reader.readAsDataURL(file);
     });
 
+  const handleVerifyLinkOtp = async () => {
+    if (!kycToken) {
+      setIsOtpVerified(true);
+      return;
+    }
+    if (otpInput.trim().length !== 6) {
+      setOtpError("Please enter a valid 6-digit OTP");
+      return;
+    }
+    setOtpError("");
+    setOtpVerifying(true);
+    try {
+      const { res } = await fetchWithBackendFallback("/api/video-kyc/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: kycToken, otp: otpInput.trim() }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.detail || "OTP verification failed");
+      }
+      setVerifiedSession({
+        full_name: String(payload.full_name || ""),
+        mobile_number: String(payload.mobile_number || ""),
+        language: String(payload.language || activeLanguage),
+      });
+      const payloadLanguage = String(payload.language || activeLanguage);
+      if (["en", "hi", "mr"].includes(payloadLanguage)) {
+        setActiveLanguage(payloadLanguage as Language);
+      }
+      setIsOtpVerified(true);
+      if (kycToken) setIsLanguageConfirmed(false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to verify OTP";
+      setOtpError(message);
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
+
   const stopMediaStream = useCallback(() => {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
@@ -255,6 +310,7 @@ function CallPageInner() {
 
   // ── 1. Initialize camera + mic ─────────────────────────────
   useEffect(() => {
+    if (!isOtpVerified || !isLanguageConfirmed) return;
     let cancelled = false;
     let stream: MediaStream | null = null;
     (async () => {
@@ -279,7 +335,7 @@ function CallPageInner() {
       stream?.getTracks().forEach((t) => t.stop());
       stopMediaStream();
     };
-  }, [stopMediaStream]);
+  }, [isOtpVerified, isLanguageConfirmed, stopMediaStream]);
 
   // ── 1b. Bind stream to <video> (element only exists after phase → conversation) ──
   useLayoutEffect(() => {
@@ -461,7 +517,7 @@ function CallPageInner() {
       const { res } = await fetchWithBackendFallback("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text, conversation_history: history, language: lang }),
+        body: JSON.stringify({ transcript: text, conversation_history: history, language: activeLanguage }),
       });
       
       const responseTime = Date.now() - startTime;
@@ -517,7 +573,7 @@ function CallPageInner() {
         const utterance = new SpeechSynthesisUtterance(data.message);
         utterance.rate = 1;
         utterance.pitch = 1;
-        utterance.lang = TTS_LANG_MAP[lang] || "en-IN";
+        utterance.lang = TTS_LANG_MAP[activeLanguage] || "en-IN";
 
         // Prevent GC of utterance before onend fires
         speechWindow._utterances = speechWindow._utterances || [];
@@ -546,7 +602,7 @@ function CallPageInner() {
       setIsWaitingForAI(false);
       // silently fail — will retry on next interval
     }
-  }, [handleConversationComplete, lang]);
+  }, [handleConversationComplete, activeLanguage]);
 
   // ── 5. Connect Deepgram STT (via sttService) ───────────────
   useEffect(() => {
@@ -602,7 +658,7 @@ function CallPageInner() {
               void sendToAgent(accumulated);
             }
           },
-        }, lang);
+        }, activeLanguage);
 
         sttCloseRef.current = conn.close;
         sttConnRef.current = conn;
@@ -627,7 +683,7 @@ function CallPageInner() {
       sttConnRef.current = null;
       if (agentTimerRef.current) clearInterval(agentTimerRef.current);
     };
-  }, [phase, mediaStream, sendToAgent, lang]);
+  }, [phase, mediaStream, sendToAgent, activeLanguage]);
 
   // ── Manual text input fallback ────────────────────────────
   const handleManualSend = () => {
@@ -849,7 +905,7 @@ function CallPageInner() {
               lead_id: leadId || undefined,
               source_channel: "video_call",
               loan_type: preapproval.loan_type,
-              phone: phone || undefined,
+              phone: effectivePhone || undefined,
               room_url: roomUrl || undefined,
               transcript_text: transcriptText,
               messages: messagesRef.current,
@@ -999,7 +1055,85 @@ function CallPageInner() {
       <div className="relative z-10 flex flex-col lg:flex-row h-[calc(100vh-65px)]">
         {/* Left: Video */}
         <div className="flex-1 flex flex-col items-center justify-center p-4 lg:p-8">
-          {phase === "connecting" && (
+          {!isOtpVerified && (
+            <div className="w-full max-w-md mx-auto">
+              <div className="glass-card p-8 space-y-5">
+                <div className="text-center">
+                  <h2 className="text-xl font-semibold text-white">Verify OTP to Start Video KYC</h2>
+                  <p className="text-sm text-slate-400 mt-2">
+                    Enter the 6-digit OTP sent to your email with the KYC link.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-2">OTP</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={otpInput}
+                    onChange={(e) => {
+                      setOtpInput(e.target.value.replace(/\D/g, ""));
+                      setOtpError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        void handleVerifyLinkOtp();
+                      }
+                    }}
+                    placeholder="Enter 6-digit OTP"
+                    className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white text-center tracking-[0.4em] placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
+                  />
+                  {otpError && <p className="text-xs text-red-300 mt-2">{otpError}</p>}
+                </div>
+                <button
+                  onClick={() => {
+                    void handleVerifyLinkOtp();
+                  }}
+                  disabled={otpVerifying || otpInput.trim().length !== 6}
+                  className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {otpVerifying ? "Verifying OTP..." : "Verify OTP"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isOtpVerified && !isLanguageConfirmed && (
+            <div className="w-full max-w-md mx-auto">
+              <div className="glass-card p-8 space-y-5">
+                <div className="text-center">
+                  <h2 className="text-xl font-semibold text-white">Select Language</h2>
+                  <p className="text-sm text-slate-400 mt-2">
+                    Choose your preferred language before starting Video KYC.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {LANGUAGE_OPTIONS.map((option) => (
+                    <button
+                      key={option.code}
+                      onClick={() => setActiveLanguage(option.code)}
+                      className={`w-full flex items-center justify-between rounded-xl border px-4 py-3 text-left transition ${
+                        activeLanguage === option.code
+                          ? "border-indigo-500 bg-indigo-500/15 text-white"
+                          : "border-white/[0.1] bg-white/[0.03] text-slate-200 hover:bg-white/[0.06]"
+                      }`}
+                    >
+                      <span className="text-sm font-medium">{option.label}</span>
+                      <span className="text-xs text-slate-400">{option.native}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setIsLanguageConfirmed(true)}
+                  className="w-full btn-primary"
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isOtpVerified && isLanguageConfirmed && phase === "connecting" && (
             <div className="text-center">
               <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-indigo-500/10 flex items-center justify-center pulse-ring">
                 <svg className="w-10 h-10 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1011,7 +1145,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {(phase === "conversation" || phase === "analyzing") && (
+          {isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing") && (
             <div className="w-full max-w-2xl">
               <div className="relative rounded-2xl overflow-hidden glow-primary">
                 <video
@@ -1066,7 +1200,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "kyc-upload" && (
+          {isOtpVerified && isLanguageConfirmed && phase === "kyc-upload" && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <div className="glass-card p-8">
                 <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 2: Complete KYC</h2>
@@ -1132,7 +1266,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "preapproval-review" && preapproval && (
+          {isOtpVerified && isLanguageConfirmed && phase === "preapproval-review" && preapproval && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <div className="glass-card p-8">
                 <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 3: Pre-Approved Offer</h2>
@@ -1180,7 +1314,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "loan-docs" && (
+          {isOtpVerified && isLanguageConfirmed && phase === "loan-docs" && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <div className="glass-card p-8">
                 <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 4: Loan Documents</h2>
@@ -1308,7 +1442,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "offer" && finalDecision && preapproval && (
+          {isOtpVerified && isLanguageConfirmed && phase === "offer" && finalDecision && preapproval && (
             <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
               <h2 className="text-2xl font-bold text-white">Final Loan Decision</h2>
               <p className="text-lg text-slate-200">Your loan has been <span className="font-semibold">{finalDecision.decision_status}</span></p>
@@ -1354,7 +1488,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "offer" && offerData && !finalDecision && (
+          {isOtpVerified && isLanguageConfirmed && phase === "offer" && offerData && !finalDecision && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <OfferCard
                 status={offerData.status as string}
@@ -1422,7 +1556,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "error" && (
+          {isOtpVerified && isLanguageConfirmed && phase === "error" && (
             <div className="text-center">
               <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
                 <span className="text-3xl">⚠️</span>
@@ -1438,7 +1572,25 @@ function CallPageInner() {
 
         {/* Right: Dynamic Stage Panel */}
         <div className="lg:w-[380px] w-full h-[300px] lg:h-auto glass border-t lg:border-t-0 lg:border-l border-white/[0.06]">
-          {(phase === "conversation" || phase === "analyzing") && (
+          {!isOtpVerified && (
+            <div className="flex h-full items-center justify-center px-6 text-center">
+              <div>
+                <p className="text-lg font-semibold text-white">Email Link Verification</p>
+                <p className="text-sm text-slate-400 mt-2">Complete OTP verification to continue.</p>
+              </div>
+            </div>
+          )}
+
+          {isOtpVerified && !isLanguageConfirmed && (
+            <div className="flex h-full items-center justify-center px-6 text-center">
+              <div>
+                <p className="text-lg font-semibold text-white">Language Selection</p>
+                <p className="text-sm text-slate-400 mt-2">Choose language to begin the KYC session.</p>
+              </div>
+            </div>
+          )}
+
+          {isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing") && (
             <TranscriptPanel
               messages={messages}
               isListening={isListening}
@@ -1447,7 +1599,7 @@ function CallPageInner() {
             />
           )}
 
-          {phase === "kyc-upload" && (
+          {isOtpVerified && isLanguageConfirmed && phase === "kyc-upload" && (
             <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 2</p>
@@ -1468,7 +1620,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "preapproval-review" && preapproval && (
+          {isOtpVerified && isLanguageConfirmed && phase === "preapproval-review" && preapproval && (
             <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 3</p>
@@ -1484,7 +1636,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "loan-docs" && preapproval && (
+          {isOtpVerified && isLanguageConfirmed && phase === "loan-docs" && preapproval && (
             <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 4</p>
@@ -1505,7 +1657,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "offer" && finalDecision && preapproval && (
+          {isOtpVerified && isLanguageConfirmed && phase === "offer" && finalDecision && preapproval && (
             <div className="flex h-full flex-col px-4 py-4 gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 5</p>
@@ -1523,7 +1675,7 @@ function CallPageInner() {
             </div>
           )}
 
-          {phase === "error" && (
+          {isOtpVerified && isLanguageConfirmed && phase === "error" && (
             <div className="flex h-full items-center justify-center px-6 text-center">
               <div>
                 <p className="text-lg font-semibold text-white">Flow interrupted</p>

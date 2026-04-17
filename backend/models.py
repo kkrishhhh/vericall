@@ -195,6 +195,20 @@ class VerifyOTPRequest(BaseModel):
     mobile_number: str = Field(..., description="Mobile number the OTP was sent to")
     otp: str = Field(..., description="The OTP entered by the user")
 
+
+class VideoKycRequestCreate(BaseModel):
+    full_name: str = Field(..., min_length=2, description="Customer full name")
+    email: str = Field(..., description="Customer email address")
+    mobile_number: str = Field(..., min_length=10, description="Customer mobile number")
+    consent_accepted: bool = Field(..., description="Customer accepted video KYC and data processing consent")
+    language: str = Field("en", description="Preferred language for KYC flow")
+    campaign_id: Optional[str] = None
+
+
+class VideoKycOtpVerifyRequest(BaseModel):
+    token: str = Field(..., description="Unique KYC token from email link")
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit OTP from email")
+
 # ── Document Verification Models ───────────────────────────────
 
 class VerifyAddressRequest(BaseModel):

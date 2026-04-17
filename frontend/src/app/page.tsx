@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
@@ -10,7 +10,6 @@ import { Moon, Sun, Shield, ArrowRight } from "lucide-react";
 import { MenuToggleIcon } from "@/components/ui/menu-toggle-icon";
 import { useScroll } from "@/components/ui/use-scroll";
 import { translations } from "@/lib/translations";
-import type { Language } from "@/lib/translations";
 import ScrollCard from "@/components/ui/scroll-card";
 
 // ── Dynamic Three.js (no SSR) ──
@@ -35,12 +34,6 @@ if (typeof window !== "undefined") {
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
 
 const CYCLING_WORDS = ["Instant.", "Seamless.", "Secure.", "Intelligent."];
-
-const LANGUAGES: { code: Language; label: string; native: string; icon: string }[] = [
-  { code: "en", label: "English", native: "English", icon: "🇬🇧" },
-  { code: "hi", label: "Hindi", native: "हिंदी", icon: "🇮🇳" },
-  { code: "mr", label: "Marathi", native: "मराठी", icon: "🇮🇳" },
-];
 
 const MARQUEE_ITEMS = [
   "7M+ Happy Customers",
@@ -132,19 +125,17 @@ function LandingPageContent() {
   const [theme, setTheme] = useState<"dark" | "light">("light");
   const [titleNumber, setTitleNumber] = useState(0);
   const [showModal, setShowModal] = useState(false);
-  const [step, setStep] = useState<"language" | "phone" | "otp" | "consent">("language");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState("");
-  const [consents, setConsents] = useState({ kyc: false, video: false, data: false });
+  const [consentAccepted, setConsentAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
-  const [selectedLanguage, setSelectedLanguage] = useState<Language>("en");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [headerHidden, setHeaderHidden] = useState(false);
 
   const scrolled = useScroll(10);
-  const router = useRouter();
   const searchParams = useSearchParams();
   const campaignId = searchParams.get("campaign_id") || "";
   const backendCandidates = uniqueUrls([
@@ -345,7 +336,6 @@ function LandingPageContent() {
   // ── Handlers ──
   const openModal = () => {
     setShowModal(true);
-    setStep("language");
     setError("");
     setSuccessMsg("");
     document.body.style.overflow = "hidden";
@@ -379,60 +369,40 @@ function LandingPageContent() {
     throw lastError instanceof Error ? lastError : new Error("Backend not reachable");
   };
 
-  const handleSendOtp = async () => {
+  const handleVideoKycRequest = async () => {
+    if (fullName.trim().length < 2) { setError("Please enter full name"); return; }
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError("Please enter a valid email"); return; }
     if (phone.length < 10) { setError("Please enter a valid 10-digit phone number"); return; }
+    if (!consentAccepted) { setError("Please provide consent to continue"); return; }
     setError(""); setSuccessMsg(""); setLoading(true);
     try {
-      const { res, baseUrl } = await fetchWithBackendFallback("/api/send-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mobile_number: `+91${phone}` }) });
-      if (!res.ok) throw new Error("Failed to send OTP");
-      setSuccessMsg(`OTP sent to terminal console for simulation (${baseUrl})!`);
-      setStep("otp");
-    } catch (err: any) {
-      if (err?.name === "AbortError") {
-        setError(`OTP request timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
+      const { res } = await fetchWithBackendFallback("/api/video-kyc/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: fullName.trim(),
+          email: email.trim(),
+          mobile_number: phone,
+          consent_accepted: consentAccepted,
+          language: "en",
+          campaign_id: campaignId || undefined,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.detail || "Failed to send Video KYC email");
+      setSuccessMsg("Video KYC link and OTP have been sent to the customer email.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to send Video KYC request.";
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      if (isAbort) {
+        setError(`Request timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
       } else {
-        setError(err?.message || `Unable to send OTP. Checked: ${backendCandidates.join(", ")}`);
+        setError(message || `Unable to send Video KYC request. Checked: ${backendCandidates.join(", ")}`);
       }
     }
     finally { setLoading(false); }
   };
-
-  const handleVerifyOtp = async () => {
-    if (otp.length < 6) { setError("Please enter a valid 6-digit OTP"); return; }
-    setError(""); setSuccessMsg(""); setLoading(true);
-    try {
-      const { res } = await fetchWithBackendFallback("/api/verify-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mobile_number: `+91${phone}`, otp }) });
-      if (!res.ok) { const data = await res.json().catch(() => null); throw new Error(data?.detail || "Invalid OTP"); }
-      setStep("consent");
-    } catch (err: any) {
-      if (err?.name === "AbortError") {
-        setError(`OTP verification timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
-      } else {
-        setError(err.message || "Unable to verify. Please try again.");
-      }
-    }
-    finally { setLoading(false); }
-  };
-
-  const handleConsentSubmit = async () => {
-    if (!consents.kyc || !consents.video || !consents.data) { setError("You must agree to all terms to proceed."); return; }
-    setError(""); setLoading(true);
-    try {
-      const sessionId = `s_${Date.now()}`;
-      await Promise.all([
-        fetchWithBackendFallback("/api/consent/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "KYC_VERIFICATION", consent_given: true }) }),
-        fetchWithBackendFallback("/api/consent/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "VIDEO_RECORDING", consent_given: true }) }),
-        fetchWithBackendFallback("/api/consent/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "DATA_PROCESSING", consent_given: true }) }),
-      ]);
-      const { res: roomRes } = await fetchWithBackendFallback("/api/create-room", { method: "POST" });
-      if (!roomRes.ok) throw new Error("Failed to create room");
-      const roomData = await roomRes.json();
-      const campaignLink = campaignId ? `${window.location.origin}/?campaign_id=${encodeURIComponent(campaignId)}` : "";
-      router.push(`/call?room=${encodeURIComponent(roomData.room_url)}&phone=${encodeURIComponent(phone)}&lang=${selectedLanguage}${campaignId ? `&campaign_id=${encodeURIComponent(campaignId)}` : ""}${campaignLink ? `&campaign_link=${encodeURIComponent(campaignLink)}` : ""}`);
-    } catch (err: any) { setError(err.message || "Failed to start session."); setLoading(false); }
-  };
-
-  const t = translations[selectedLanguage] || translations.en;
+  const t = translations.en;
 
   // ═══════════════════════════════════════════════════════
   //  RENDER
@@ -490,7 +460,7 @@ function LandingPageContent() {
                 {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
               </button>
               <button onClick={openModal} className="text-sm font-semibold text-white rounded-lg px-5 py-2 ml-2 transition-all duration-300 hover:-translate-y-0.5 cursor-pointer" style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)", boxShadow: "0 4px 15px rgba(27,43,107,0.3)" }}>
-                Start Application
+                Request Video KYC
               </button>
             </div>
 
@@ -516,7 +486,7 @@ function LandingPageContent() {
             </div>
             <button onClick={() => { setMobileMenuOpen(false); openModal(); }}
               className="w-full py-3 rounded-xl text-white font-semibold text-sm cursor-pointer"
-              style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}>Start Application</button>
+              style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}>Request Video KYC</button>
           </div>
         </div>
       </header>
@@ -583,7 +553,7 @@ function LandingPageContent() {
             className="hero-cta-btn mt-10 px-8 py-3.5 rounded-2xl text-white font-semibold text-base transition-all duration-300 hover:-translate-y-1 cursor-pointer flex items-center gap-2"
             style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)", boxShadow: "0 4px 20px rgba(27,43,107,0.35)" }}
           >
-            Start Your Application <ArrowRight size={18} />
+            Request Video KYC <ArrowRight size={18} />
           </button>
         </div>
 
@@ -905,94 +875,81 @@ function LandingPageContent() {
                   <Image src="/pfl-logo.png" alt="PFL" width={100} height={30} className="h-7 w-auto brightness-200 object-contain" />
                   <span className="text-white font-semibold text-sm">VANTAGE</span>
                 </div>
-                <h2 className="text-xl font-semibold text-white">{step === "language" ? t.chooseLanguage : t.startLoanApp}</h2>
-                <p className="text-sm text-white/35 mt-1">{step === "language" ? t.selectLanguageDesc : t.loanAppDesc}</p>
+                <h2 className="text-xl font-semibold text-white">Request Video KYC</h2>
+                <p className="text-sm text-white/35 mt-1">Enter customer details to send secure KYC link and OTP.</p>
               </div>
 
-              {step === "language" && (
-                <>
-                  <div className="space-y-2 mb-6">
-                    {LANGUAGES.map((lang) => (
-                      <button key={lang.code} onClick={() => setSelectedLanguage(lang.code)}
-                        className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${selectedLanguage === lang.code ? "bg-blue-500/15 border-blue-500/50" : "bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.06]"}`}>
-                        <span className="text-xl">{lang.icon}</span>
-                        <div>
-                          <span className="text-white font-medium text-sm">{lang.label}</span>
-                          <span className="block text-xs text-white/35">{lang.native}</span>
-                        </div>
-                        {selectedLanguage === lang.code && <svg className="w-4 h-4 ml-auto text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={() => setStep("phone")} className="w-full py-3 rounded-xl text-white font-semibold text-sm cursor-pointer transition-all hover:brightness-110" style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}>{t.continueBtn} →</button>
-                </>
+              {campaignId && (
+                <div className="mb-4 rounded-xl px-4 py-3 text-xs" style={{ background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.2)", color: "#93C5FD" }}>
+                  Campaign: {campaignId}
+                </div>
               )}
 
-              {step === "phone" && (
-                <>
-                  {campaignId && <div className="mb-4 rounded-xl px-4 py-3 text-xs" style={{ background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.2)", color: "#93C5FD" }}>Campaign: {campaignId}</div>}
-                  <div className="mb-4">
-                    <label className="block text-sm text-white/50 mb-2">{t.mobileNumber}</label>
-                    <div className="flex">
-                      <span className="inline-flex items-center px-4 rounded-l-xl bg-white/[0.05] border border-r-0 border-white/[0.1] text-sm text-white/35">+91</span>
-                      <input type="tel" maxLength={10} value={phone} onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "")); setError(""); }}
-                        placeholder={t.phonePlaceholder} className="flex-1 px-4 py-3 rounded-r-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-white/20 focus:outline-none focus:border-blue-500 transition text-sm" />
-                    </div>
-                    {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
-                    {successMsg && <p className="text-emerald-400 text-xs mt-2">{successMsg}</p>}
+              <div className="space-y-4 mb-5">
+                <div>
+                  <label className="block text-sm text-white/50 mb-2">Full Name</label>
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => { setFullName(e.target.value); setError(""); }}
+                    placeholder="Enter full name"
+                    className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-white/20 focus:outline-none focus:border-blue-500 transition text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-white/50 mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); setError(""); }}
+                    placeholder="Enter email address"
+                    className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-white/20 focus:outline-none focus:border-blue-500 transition text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-white/50 mb-2">Mobile Number</label>
+                  <div className="flex">
+                    <span className="inline-flex items-center px-4 rounded-l-xl bg-white/[0.05] border border-r-0 border-white/[0.1] text-sm text-white/35">+91</span>
+                    <input
+                      type="tel"
+                      maxLength={10}
+                      value={phone}
+                      onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "")); setError(""); }}
+                      placeholder="Enter 10-digit mobile"
+                      className="flex-1 px-4 py-3 rounded-r-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-white/20 focus:outline-none focus:border-blue-500 transition text-sm"
+                    />
                   </div>
-                  <button onClick={handleSendOtp} disabled={loading} className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 cursor-pointer transition-all hover:brightness-110" style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}>
-                    {loading ? <span className="flex items-center justify-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>{t.sendingOtp}</span> : t.sendOtpBtn}
-                  </button>
-                  <button onClick={() => setStep("language")} className="w-full mt-2 text-xs text-white/25 hover:text-white/50 transition cursor-pointer">← {t.changeLanguage}</button>
-                  <p className="text-[11px] text-white/30 mt-2 text-center">Backend: {activeBackendUrl}</p>
-                </>
-              )}
+                </div>
+                <label className="flex items-start gap-3 cursor-pointer group rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-1 w-4 h-4 rounded accent-blue-500"
+                    checked={consentAccepted}
+                    onChange={(e) => { setConsentAccepted(e.target.checked); setError(""); }}
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-white/80 group-hover:text-white transition">I consent to video KYC and data processing</p>
+                  </div>
+                </label>
+              </div>
 
-              {step === "otp" && (
-                <>
-                  <div className="mb-4">
-                    <label className="block text-sm text-white/50 mb-2">{t.enterOtp}</label>
-                    <input type="text" maxLength={6} value={otp} onChange={(e) => { setOtp(e.target.value.replace(/\D/g, "")); setError(""); }}
-                      placeholder={t.otpPlaceholder} className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white text-center tracking-[0.5em] placeholder-white/20 focus:outline-none focus:border-blue-500 transition text-lg" />
-                    {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
-                    {successMsg && <p className="text-emerald-400 text-xs mt-2">{successMsg}</p>}
-                    <div className="flex justify-between mt-2 text-xs">
-                      <button onClick={() => setStep("phone")} className="text-white/25 hover:text-white/50 transition cursor-pointer">{t.changeDetails}</button>
-                      <button onClick={handleSendOtp} className="cursor-pointer hover:brightness-125 transition text-blue-400">{t.resendCode}</button>
-                    </div>
-                  </div>
-                  <button onClick={handleVerifyOtp} disabled={loading} className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 cursor-pointer transition-all hover:brightness-110" style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}>
-                    {loading ? <span className="flex items-center justify-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>{t.verifying}</span> : t.verifyStartBtn}
-                  </button>
-                </>
-              )}
+              {error && <p className="text-red-400 text-xs text-center mb-3">{error}</p>}
+              {successMsg && <p className="text-emerald-400 text-xs text-center mb-3">{successMsg}</p>}
 
-              {step === "consent" && (
-                <>
-                  <h3 className="text-white font-medium mb-4 text-center text-sm border-b border-white/10 pb-2">Mandatory Data Consents</h3>
-                  <div className="space-y-3 mb-6">
-                    {([
-                      { key: "kyc" as const, title: "Identity Verification", desc: "I consent to verifying my identity via Aadhaar/PAN based KYC processes." },
-                      { key: "video" as const, title: "Video Recording", desc: "I acknowledge this video call will be recorded for liveness and authenticity checks." },
-                      { key: "data" as const, title: "Data Processing & AI Analysis", desc: "I agree to data processing to generate a real-time loan approval decision." },
-                    ]).map((c) => (
-                      <label key={c.key} className="flex items-start gap-3 cursor-pointer group">
-                        <input type="checkbox" className="mt-1 w-4 h-4 rounded accent-blue-500" checked={consents[c.key]} onChange={(e) => setConsents({ ...consents, [c.key]: e.target.checked })} />
-                        <div>
-                          <p className="text-sm font-medium text-white/70 group-hover:text-white transition">{c.title}</p>
-                          <p className="text-xs text-white/30">{c.desc}</p>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                  {error && <p className="text-red-400 text-xs text-center mb-3">{error}</p>}
-                  <button onClick={handleConsentSubmit} disabled={loading || !consents.kyc || !consents.video || !consents.data}
-                    className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 cursor-pointer transition-all hover:brightness-110" style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}>
-                    {loading ? <span className="flex items-center justify-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Starting Call...</span> : "Accept & Start Call →"}
-                  </button>
-                </>
-              )}
+              <button
+                onClick={handleVideoKycRequest}
+                disabled={loading || !fullName.trim() || !email.trim() || phone.length < 10 || !consentAccepted}
+                className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all hover:brightness-110"
+                style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}
+              >
+                {loading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                    Sending request...
+                  </span>
+                ) : "Request Video KYC"}
+              </button>
+              <p className="text-[11px] text-white/30 mt-2 text-center">Backend: {activeBackendUrl}</p>
 
               <div className="mt-4 flex items-center justify-center gap-3 text-[10px] text-white/20">
                 <span className="flex items-center gap-1"><Shield size={10} className="text-green-400/50" />{t.rbiCompliant}</span>
