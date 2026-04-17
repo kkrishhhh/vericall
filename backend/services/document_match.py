@@ -524,8 +524,12 @@ Use null for unknown fields."""
 
         if face_scores:
             selfie_match_score = max(face_scores)
+            # Lowered threshold from 0.55 to 0.40 to handle real-world variations:
+            # - Different lighting (document photo vs. video call)
+            # - Different angles and expressions
+            # - Camera quality differences
             # DeepFace "verified" can be strict in real webcam lighting; use score fallback.
-            selfie_match = face_verified or selfie_match_score >= 0.55
+            selfie_match = face_verified or selfie_match_score >= 0.40
         elif selfie_b64:
             selfie_match_score = None
             selfie_match = None
@@ -538,7 +542,7 @@ Use null for unknown fields."""
             (
                 selfie_b64 is not None
                 and selfie_match is False
-                and (selfie_match_score is not None and selfie_match_score < 0.35)
+                and (selfie_match_score is not None and selfie_match_score < 0.25)
             ),
         ]
         verified = not any(hard_fail)
@@ -553,7 +557,7 @@ Use null for unknown fields."""
         if not gender_match:
             issues.append("gender mismatch")
         if selfie_b64 is not None and selfie_match is False:
-            if selfie_match_score is not None and selfie_match_score < 0.35:
+            if selfie_match_score is not None and selfie_match_score < 0.25:
                 issues.append("selfie does not match document photo")
             else:
                 issues.append("selfie match borderline (manual review advised)")
@@ -703,7 +707,8 @@ Use null for unknown fields."""
                 distance = compare.get("distance")
                 if isinstance(distance, (int, float)):
                     selfie_match_score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
-                    selfie_match = bool(compare.get("verified"))
+                    # Use threshold 0.40 for consistency with other checks
+                    selfie_match = bool(compare.get("verified")) or selfie_match_score >= 0.40
             except Exception:
                 selfie_match_score = None
                 selfie_match = None
@@ -720,7 +725,8 @@ Use null for unknown fields."""
                 distance = compare.get("distance")
                 if isinstance(distance, (int, float)):
                     selfie_match_score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
-                    selfie_match = bool(compare.get("verified"))
+                    # Use threshold 0.40 for consistency with other checks
+                    selfie_match = bool(compare.get("verified")) or selfie_match_score >= 0.40
             except Exception:
                 selfie_match_score = None
                 selfie_match = None

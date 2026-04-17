@@ -1,8 +1,7 @@
-"""VeriCall AI Agent — Groq LLM conversation engine (Fixed Loop Issue)."""
+"""VeriCall AI Agent — Groq LLM conversation engine."""
 
 import os
 import json
-import re
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -18,56 +17,48 @@ _LANGUAGE_INSTRUCTIONS = {
 
 
 def _build_system_prompt(language: str = "en") -> str:
-    """
-    Crystal clear system prompt that prevents loops by explicitly tracking state.
-    """
     lang_instruction = _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
-    return f"""You are VeriCall, a professional loan agent. Follow this EXACT sequence, asking each question ONLY ONCE:
+    return f"""You are VeriCall, an AI loan origination agent for Poonawalla Fincorp.
+Your job is to collect the following information from the customer in a friendly, conversational way:
+1. Full name
+2. Employment type (salaried/self-employed/professional)
+3. Monthly income (in INR)
+4. Loan type (personal/business/loan against property/other)
+5. Requested loan amount (INR)
+6. Declared age (optional; collect if naturally provided)
+7. Explicit verbal consent for video recording (MANDATORY — must be the LAST question before completing)
 
-QUESTION SEQUENCE (never ask a question twice):
-Q1: Ask for full name (if not provided)
-Q2: Ask for employment type ONLY (salaried/self-employed/professional) - if they say "employed", classify as "salaried"
-Q3: Ask for monthly income in INR - extract ONLY the number (e.g., "1 lakh" = 100000, "50k" = 50000)
-Q4: Ask for loan type ONLY (personal/home/car/business/loan-against-property/other)
-Q5: Ask for loan amount in INR - extract ONLY the number
-Q6: Ask for age - extract ONLY the number
-Q7: Ask for video consent - EXACT question: "Do you provide explicit consent for this video session to be recorded? Say Yes or No."
-
-CRITICAL RULES:
-- After Q6 (age), you MUST ask Q7 (consent). Do not skip or repeat previous questions.
-- NEVER ask the same question twice. Once you have answered a field, NEVER ask it again.
-- Track in your mind: which of the 7 questions have I asked?
-- If user gives unclear answers (e.g., "employed" for employment), interpret generously and move forward.
-- When user answers Q7 (consent), output ONLY the JSON below with no other text:
-
-{{"done": true, "name": "STRING", "employment_type": "salaried|self-employed|professional", "monthly_income": NUMBER, "loan_type": "STRING", "requested_loan_amount": NUMBER, "declared_age": NUMBER, "consent": true|false, "interview_notes": ""}}
-
-EXAMPLES:
-- User says "1 lakh" for income → monthly_income: 100000
-- User says "3 lakh" for loan → requested_loan_amount: 300000
-- User says "employed" for employment → employment_type: "salaried"
-- User says "personal" for loan → loan_type: "personal"
-
-Remember: You are professional but friendly. Keep responses concise (1-2 sentences). {lang_instruction}
-"""
+Rules:
+- Ask one question at a time. Be warm and professional.
+- Use only these values for employment_type: salaried, self-employed, professional.
+- IMPORTANT: After collecting all data fields (1-6), you MUST ask this EXACT final consent question before outputting the JSON:
+  "Do you provide your explicit consent for this video session to be recorded and used for loan origination purposes as required by RBI regulations? Please say Yes or No."
+- When the customer responds to the consent question, you MUST IMMEDIATELY output the final JSON. Do NOT ask again, do NOT try to convince them.
+- Set "consent" to true ONLY if the customer clearly says Yes/Haan/Ho. If they say No/Nahi/Nako or are unclear, set consent to false.
+- Whether consent is true or false, ALWAYS output the final JSON immediately after their response. The system will handle blocking if consent is false.
+- When ALL required fields are collected AND the consent question has been answered (yes OR no), your ENTIRE reply must be ONLY valid JSON (no prose, no markdown) in this exact shape:
+{{"done": true, "name": "", "employment_type": "", "monthly_income": 0, "loan_type": "", "requested_loan_amount": 0, "declared_age": 0, "consent": true, "interview_notes": ""}}
+- Use numbers for monthly_income and requested_loan_amount.
+- Keep declared_age as 0 if unknown.
+- Never reveal that you are AI-powered or mention specific APIs.
+- Start by greeting the customer warmly and asking for their full name.
+- {lang_instruction} Keep conversational turns concise (2-3 sentences max) until the final JSON-only message.
+- Fill in the actual values the customer provided in the JSON output."""
 
 
-# Use fast 8B instant model 
-MODEL = "llama-3.1-8b-instant"
+MODEL = "llama-3.3-70b-versatile"
 
 
 def run_agent(transcript: str, conversation_history: list[dict], language: str = "en") -> dict:
     """
-    Run the Groq LLM agent WITHOUT trimming history.
-    Keep ALL conversation history so AI remembers what was already collected.
-    
+    Run the Groq LLM agent with the latest transcript and conversation history.
+
     Returns:
         dict with keys: message (str), done (bool), data (dict|None)
     """
     messages = [{"role": "system", "content": _build_system_prompt(language)}]
 
-    # IMPORTANT: Keep full conversation history (don't trim)
-    # This prevents the loop issue where AI forgets what was already asked
+    # Add conversation history
     for msg in conversation_history:
         messages.append({"role": msg["role"], "content": msg["content"]})
 

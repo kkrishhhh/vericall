@@ -13,12 +13,14 @@ interface TranscriptPanelProps {
   messages: Message[];
   isListening: boolean;
   interimText?: string;
+  isWaitingForAI?: boolean;
 }
 
 export default function TranscriptPanel({
   messages,
   isListening,
   interimText,
+  isWaitingForAI = false,
 }: TranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -101,6 +103,29 @@ export default function TranscriptPanel({
               <span className="text-xs text-slate-500 italic">speaking...</span>
             </div>
             <p className="text-sm text-slate-300 italic">{interimText}</p>
+          </motion.div>
+        )}
+
+        {/* AI thinking indicator */}
+        {isWaitingForAI && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="transcript-bubble agent"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-semibold text-indigo-400">🤖 VeriCall</span>
+              <span className="text-xs text-indigo-300">thinking...</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="flex gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span className="text-xs text-slate-400">Processing your request...</span>
+            </div>
           </motion.div>
         )}
       </div>

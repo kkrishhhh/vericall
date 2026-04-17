@@ -78,6 +78,16 @@ const STATS: { value: number; suffix: string; label: string; display?: string }[
   { value: 0, suffix: "", label: "Credit Rating", display: "AAA" },
 ];
 
+function uniqueUrls(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════
 //  HELPERS
 // ═══════════════════════════════════════════════════════
@@ -137,6 +147,12 @@ function LandingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const campaignId = searchParams.get("campaign_id") || "";
+  const backendCandidates = uniqueUrls([
+    BACKEND,
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8000",
+  ]);
+  const [activeBackendUrl, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const mainCardRef = useRef<HTMLDivElement>(null);
@@ -339,15 +355,45 @@ function LandingPageContent() {
     document.body.style.overflow = "";
   };
 
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const fetchWithBackendFallback = async (path: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    let lastError: unknown = null;
+    for (const baseUrl of backendCandidates) {
+      try {
+        const res = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
+        setActiveBackendUrl(baseUrl);
+        return { res, baseUrl };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Backend not reachable");
+  };
+
   const handleSendOtp = async () => {
     if (phone.length < 10) { setError("Please enter a valid 10-digit phone number"); return; }
     setError(""); setSuccessMsg(""); setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/send-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mobile_number: `+91${phone}` }) });
+      const { res, baseUrl } = await fetchWithBackendFallback("/api/send-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mobile_number: `+91${phone}` }) });
       if (!res.ok) throw new Error("Failed to send OTP");
-      setSuccessMsg("OTP sent to terminal console for simulation!");
+      setSuccessMsg(`OTP sent to terminal console for simulation (${baseUrl})!`);
       setStep("otp");
-    } catch { setError("Unable to send OTP. Is the backend running?"); }
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        setError(`OTP request timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
+      } else {
+        setError(err?.message || `Unable to send OTP. Checked: ${backendCandidates.join(", ")}`);
+      }
+    }
     finally { setLoading(false); }
   };
 
@@ -355,10 +401,16 @@ function LandingPageContent() {
     if (otp.length < 6) { setError("Please enter a valid 6-digit OTP"); return; }
     setError(""); setSuccessMsg(""); setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/verify-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mobile_number: `+91${phone}`, otp }) });
+      const { res } = await fetchWithBackendFallback("/api/verify-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mobile_number: `+91${phone}`, otp }) });
       if (!res.ok) { const data = await res.json().catch(() => null); throw new Error(data?.detail || "Invalid OTP"); }
       setStep("consent");
-    } catch (err: any) { setError(err.message || "Unable to verify. Please try again."); }
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        setError(`OTP verification timed out after 12s. Checked: ${backendCandidates.join(", ")}`);
+      } else {
+        setError(err.message || "Unable to verify. Please try again.");
+      }
+    }
     finally { setLoading(false); }
   };
 
@@ -368,11 +420,11 @@ function LandingPageContent() {
     try {
       const sessionId = `s_${Date.now()}`;
       await Promise.all([
-        fetch(`${BACKEND}/api/consent/record`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "KYC_VERIFICATION", consent_given: true }) }),
-        fetch(`${BACKEND}/api/consent/record`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "VIDEO_RECORDING", consent_given: true }) }),
-        fetch(`${BACKEND}/api/consent/record`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "DATA_PROCESSING", consent_given: true }) }),
+        fetchWithBackendFallback("/api/consent/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "KYC_VERIFICATION", consent_given: true }) }),
+        fetchWithBackendFallback("/api/consent/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "VIDEO_RECORDING", consent_given: true }) }),
+        fetchWithBackendFallback("/api/consent/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, consent_type: "DATA_PROCESSING", consent_given: true }) }),
       ]);
-      const roomRes = await fetch(`${BACKEND}/api/create-room`, { method: "POST" });
+      const { res: roomRes } = await fetchWithBackendFallback("/api/create-room", { method: "POST" });
       if (!roomRes.ok) throw new Error("Failed to create room");
       const roomData = await roomRes.json();
       const campaignLink = campaignId ? `${window.location.origin}/?campaign_id=${encodeURIComponent(campaignId)}` : "";
@@ -893,6 +945,7 @@ function LandingPageContent() {
                     {loading ? <span className="flex items-center justify-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>{t.sendingOtp}</span> : t.sendOtpBtn}
                   </button>
                   <button onClick={() => setStep("language")} className="w-full mt-2 text-xs text-white/25 hover:text-white/50 transition cursor-pointer">← {t.changeLanguage}</button>
+                  <p className="text-[11px] text-white/30 mt-2 text-center">Backend: {activeBackendUrl}</p>
                 </>
               )}
 

@@ -118,6 +118,7 @@ function CallPageInner() {
   /** Set when getUserMedia succeeds — drives video element + STT (refs miss first paint while still on "connecting"). */
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isWaitingForAI, setIsWaitingForAI] = useState(false);
   const [interimText, setInterimText] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [sttStatus, setSttStatus] = useState<"idle" | "connecting" | "live" | "failed">("idle");
@@ -452,12 +453,20 @@ function CallPageInner() {
         return;
       }
 
+      // Show "AI is thinking" indicator
+      setIsWaitingForAI(true);
+      const startTime = Date.now();
+
       const history = conversationHistoryRef.current;
       const { res } = await fetchWithBackendFallback("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript: text, conversation_history: history, language: lang }),
       });
+      
+      const responseTime = Date.now() - startTime;
+      setIsWaitingForAI(false);
+
       if (!res.ok) {
         const detail = await res
           .json()
@@ -533,6 +542,8 @@ function CallPageInner() {
         handleConversationComplete(data.data);
       }
     } catch {
+      // Reset waiting state on error
+      setIsWaitingForAI(false);
       // silently fail — will retry on next interval
     }
   }, [handleConversationComplete, lang]);
@@ -1432,6 +1443,7 @@ function CallPageInner() {
               messages={messages}
               isListening={isListening}
               interimText={interimText}
+              isWaitingForAI={isWaitingForAI}
             />
           )}
 
