@@ -7,6 +7,7 @@ import TranscriptPanel from "@/components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
+import VantageLoader from "@/components/ui/vantage-loader";
 
 const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
 const LANGUAGE_OPTIONS: { code: Language; label: string; native: string }[] = [
@@ -1041,10 +1042,7 @@ function CallPageInner() {
           )}
           {phase === "analyzing" && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-              <svg className="animate-spin h-3 w-3 text-amber-400" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
+              <VantageLoader size="sm" showLogo={false} />
               <span className="text-xs text-amber-400 font-medium">Processing</span>
             </div>
           )}
@@ -1160,11 +1158,8 @@ function CallPageInner() {
                     <span className="text-xs text-slate-200 font-medium">You</span>
                   </div>
                   {phase === "analyzing" && (
-                    <div className="glass rounded-lg px-4 py-2 flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
+                    <div className="glass rounded-lg px-4 py-2 flex items-center gap-3">
+                      <VantageLoader size="sm" showLogo={false} />
                       <span className="text-xs text-cyan-400">{processingStep}</span>
                     </div>
                   )}
@@ -1704,11 +1699,7 @@ export default function CallPage() {
       fallback={
         <main className="min-h-screen animated-gradient-bg flex items-center justify-center">
           <div className="text-center">
-            <svg className="animate-spin h-10 w-10 text-indigo-400 mx-auto mb-4" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <p className="text-slate-400">Loading session...</p>
+            <VantageLoader text="Loading session..." size="lg" />
           </div>
         </main>
       }

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import VantageLoader from "@/components/ui/vantage-loader";
 
 interface AuditSession {
   session_id: string;
@@ -49,6 +50,7 @@ interface AuditSession {
 
 export default function ApplicationDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const id = params.id as string;
   const [session, setSession] = useState<AuditSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,10 +81,7 @@ export default function ApplicationDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen animated-gradient-bg flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
-          <p className="text-indigo-300 font-medium animate-pulse">Retrieving Profile...</p>
-        </div>
+        <VantageLoader text="Retrieving Profile..." size="lg" />
       </div>
     );
   }
@@ -115,11 +114,11 @@ export default function ApplicationDetailPage() {
       {/* Header */}
       <header className="relative z-10 glass border-b border-white/[0.06] px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Link href="/admin" className="p-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-slate-300 hover:bg-white/[0.1] transition group">
+          <button onClick={() => router.back()} className="p-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-slate-300 hover:bg-white/[0.1] transition group">
             <svg className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-          </Link>
+          </button>
           <div>
             <h1 className="text-xl font-bold text-white tracking-tight">Application Review</h1>
             <p className="text-xs text-slate-400 font-mono">{session.session_id}</p>
@@ -146,7 +145,7 @@ export default function ApplicationDetailPage() {
               <ProfileItem label="Phone" value={session.phone} />
               <ProfileItem label="Declared Age" value={session.extracted?.age} suffix="years" />
               <ProfileItem label="Employment" value={session.extracted?.employment} />
-              <ProfileItem label="Monthly Income" value={session.extracted?.income} prefix="\u20B9" isCurrency />
+              <ProfileItem label="Monthly Income" value={session.extracted?.income} prefix={String.fromCharCode(0x20B9)} isCurrency />
               <ProfileItem label="Loan Purpose" value={session.extracted?.purpose} />
               <ProfileItem label="Blood Group" value={session.extracted?.blood_group} />
             </div>
@@ -199,7 +198,7 @@ export default function ApplicationDetailPage() {
                </div>
 
                <div className="space-y-4">
-                  <ProfileItem label="Approved Amount" value={session.offer?.loan_amount} prefix="\u20B9" isCurrency />
+                  <ProfileItem label="Approved Amount" value={session.offer?.loan_amount} prefix={String.fromCharCode(0x20B9)} isCurrency />
                   <ProfileItem label="Interest Rate" value={session.offer?.interest_rate} suffix="%" />
                   <ProfileItem label="Tenure Range" value={session.offer?.tenure_options?.join(", ") || "\u2014"} suffix="months" />
                </div>

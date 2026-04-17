@@ -83,21 +83,33 @@ IMPORTANT NOTES FOR QUERY GENERATION:
   '$.offer.approved_amount', '$.offer.interest_rate'
 """
 
-_SYSTEM_PROMPT = f"""You are a data analytics assistant for VeriCall, a loan origination AI system.
-You help PFL (Poonawalla Fincorp Limited) officers answer questions about loan sessions.
+_SYSTEM_PROMPT = f"""You are VANTAGE Assistant — a friendly, conversational AI helper for PFL (Poonawalla Fincorp Limited) staff inside the VeriCall admin dashboard.
+
+You have TWO modes:
+
+MODE 1 — GENERAL QUESTIONS (about the platform, onboarding, how things work, etc.)
+If the user asks a general question that does NOT need database data, respond conversationally and helpfully. Explain how VeriCall works, what the panels do, what KYC means, etc. Be friendly, concise, and use plain language. Do NOT generate SQL for these.
+For general questions, start your response with "GENERAL:" followed by your answer.
+
+MODE 2 — DATA QUESTIONS (stats, counts, trends, specific session lookups, etc.)
+If the user asks something that requires querying the database, generate a SQLite SELECT query.
+For data questions, start your response with "SQL:" followed by ONLY the raw SQL query.
 
 You have access to these SQLite tables:
 {_AUDIT_SCHEMA}
 
-When the user asks a question:
-1. Generate a valid SQLite SELECT query to answer it.
-2. Return ONLY the SQL query, nothing else.
-3. Do NOT use any DDL or DML (no CREATE, DROP, INSERT, UPDATE, DELETE, ALTER).
-4. Only use SELECT statements.
-5. Always limit results to at most 100 rows (add LIMIT 100 if not already present).
-6. Use proper datetime functions for date comparisons.
+Rules for SQL generation:
+1. Only SELECT statements. No DDL or DML.
+2. Always limit results to 100 rows max.
+3. Use proper datetime functions for date comparisons.
+4. Return ONLY "SQL:" followed by the raw query. No markdown, no code blocks.
 
-Return ONLY the raw SQL query. No markdown, no code blocks, no explanation."""
+Examples:
+- "how does the site work?" → GENERAL: VeriCall is an AI-powered Video KYC platform...
+- "how many KYCs today?" → SQL: SELECT COUNT(*) as count FROM audit_sessions WHERE logged_at >= datetime('now', '-1 day')
+- "what's my role here?" → GENERAL: As a PFL officer, you can review applications...
+- "show rejected applications" → SQL: SELECT * FROM audit_sessions WHERE offer_status = 'DECLINED' ORDER BY logged_at DESC LIMIT 20"""
+
 
 
 # ── SQL Sanitization ─────────────────────────────────────────────
@@ -146,12 +158,11 @@ def _sanitize_sql(sql: str) -> str:
 # ── Main Query Function ─────────────────────────────────────────
 
 def ask_analytics(question: str) -> dict:
-    """Process a natural language analytics question.
+    """Process a natural language question — either general or data-driven.
 
-    1. Sends question to Groq LLM to generate SQL
-    2. Sanitizes and validates the SQL
-    3. Executes it against audit_sessions.db
-    4. Sends results back to LLM for natural language summary
+    1. Sends question to Groq LLM which decides: GENERAL answer or SQL query
+    2. If GENERAL: returns the conversational answer directly
+    3. If SQL: sanitizes, executes, and summarizes the results
 
     Args:
         question: Natural language question from PFL officer.
@@ -159,26 +170,42 @@ def ask_analytics(question: str) -> dict:
     Returns:
         Dict with: answer (str), sql (str), raw_data (list), row_count (int)
     """
-    # Step 1: Generate SQL from natural language
+    # Step 1: Ask LLM to decide mode and respond
     try:
-        sql_response = _client.chat.completions.create(
+        response = _client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": question},
             ],
-            temperature=0.1,
-            max_tokens=500,
+            temperature=0.3,
+            max_tokens=800,
         )
-        raw_sql = sql_response.choices[0].message.content.strip()
+        llm_output = response.choices[0].message.content.strip()
     except Exception as e:
         return {
-            "answer": f"Failed to generate SQL query: {str(e)}",
+            "answer": f"Couldn't reach the AI — {str(e)}",
             "sql": "",
             "raw_data": [],
             "row_count": 0,
             "error": True,
         }
+
+    # Step 1b: Check if this is a GENERAL (non-SQL) response
+    if llm_output.upper().startswith("GENERAL:"):
+        answer_text = llm_output[len("GENERAL:"):].strip()
+        return {
+            "answer": answer_text,
+            "sql": "",
+            "raw_data": [],
+            "row_count": 0,
+            "error": False,
+        }
+
+    # Extract SQL (strip "SQL:" prefix if present)
+    raw_sql = llm_output
+    if raw_sql.upper().startswith("SQL:"):
+        raw_sql = raw_sql[4:].strip()
 
     # Step 2: Sanitize SQL
     try:
@@ -221,10 +248,11 @@ def ask_analytics(question: str) -> dict:
                 {
                     "role": "system",
                     "content": (
-                        "You are a data analyst for VeriCall loan origination system. "
-                        "Summarize the SQL query results in clear, concise natural language. "
-                        "Be specific with numbers. Use bullet points for lists. "
-                        "If there's no data, say so clearly."
+                        "You are VANTAGE Assistant — a friendly, helpful colleague for PFL staff. "
+                        "Summarize the database results in a natural, conversational tone. "
+                        "Be specific with numbers but keep it casual and easy to read. "
+                        "Use short sentences. If there's no data, just say 'Looks like there's nothing here yet!' "
+                        "Don't be overly formal — imagine you're chatting with a coworker."
                     ),
                 },
                 {
