@@ -359,3 +359,92 @@
   transform-origin: center;
   stroke-linecap: round;
 }
+
+/* Admin dashboard fade-in animation */
+@keyframes panelFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* macOS Dock icon slot */
+.dock-icon-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ── VANTAGE 3D Isometric Box Loader ────────────────────────── */
+.vantage-loader {
+  display: flex;
+  perspective: 780px;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+}
+
+.vantage-box {
+  width: 30px;
+  height: 30px;
+  position: relative;
+  transform-style: preserve-3d;
+  transform: rotateX(-33.5deg) rotateY(45deg);
+}
+
+.vantage-box:nth-child(1) { animation: vantage-from-right 1.5s infinite 0.15s; }
+.vantage-box:nth-child(2) { animation: vantage-from-left  1.5s infinite 0.3s; }
+.vantage-box:nth-child(3) { animation: vantage-from-right 1.5s infinite 0.45s; }
+.vantage-box:nth-child(4) { animation: vantage-from-left  1.5s infinite 0.6s; }
+
+.vantage-side-left {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #4F46E5, #6366f1);
+  transform: rotateY(-90deg) translateX(-50%);
+  transform-origin: left;
+}
+
+.vantage-side-right {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #2563EB, #4F46E5);
+  transform: rotateY(90deg) translateX(50%) translateZ(30px);
+  transform-origin: right;
+}
+
+.vantage-side-top {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+  transform: rotateX(90deg) translateZ(30px);
+  transform-origin: top;
+}
+
+@keyframes vantage-from-left {
+  0% { z-index: 20; opacity: 0; translate: -20px -6px; }
+  20% { z-index: 10; opacity: 1; translate: 0px 0px; }
+  40% { z-index: 9; translate: 0px 4px; }
+  60% { z-index: 8; translate: 0px 8px; }
+  80% { z-index: 7; opacity: 1; translate: 0px 12px; }
+  100% { z-index: 5; translate: 0px 30px; opacity: 0; }
+}
+
+@keyframes vantage-from-right {
+  0% { z-index: 20; opacity: 0; translate: 20px -6px; }
+  20% { z-index: 10; opacity: 1; translate: 0px 0px; }
+  40% { z-index: 9; translate: 0px 4px; }
+  60% { z-index: 8; translate: 0px 8px; }
+  80% { z-index: 7; opacity: 1; translate: 0px 12px; }
+  100% { z-index: 5; translate: 0px 30px; opacity: 0; }
+}

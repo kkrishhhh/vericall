@@ -10,6 +10,7 @@ import { LumaSpin } from "@/components/ui/luma-spin";
 import { AnimatedDownload } from "@/components/ui/animated-download";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
+import VantageLoader from "@/components/ui/vantage-loader";
 
 const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
 const LANGUAGE_OPTIONS: { code: Language; label: string; native: string }[] = [
@@ -1309,12 +1310,12 @@ function CallPageInner() {
             <div className="text-[11px] text-slate-500">Starting voice…</div>
           )}
           {phase === "analyzing" && (
-            <div className="flex items-center gap-1.5 rounded-full bg-amber-100 border border-amber-200 px-2.5 py-1">
-              <svg className="h-3 w-3 animate-spin text-amber-600" viewBox="0 0 24 24">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+              <svg className="animate-spin h-3 w-3 text-amber-400" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span className="text-[11px] text-amber-700 font-medium">Processing</span>
+              <span className="text-xs text-amber-400 font-medium">Processing</span>
             </div>
           )}
         </div>
@@ -1451,58 +1452,58 @@ function CallPageInner() {
             </div>
           )}
 
-          {isConversationStage && (
-            <div className="w-full h-full">
-              <div className="entry-zoom-card flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200/70 bg-white/75 shadow-[0_20px_80px_rgba(15,23,42,0.12)] backdrop-blur-xl">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-3 py-2.5 sm:px-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#1B2B6B] to-[#2563EB] text-white shadow-[0_8px_25px_rgba(27,43,107,0.22)]">
-                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 11.5a7.5 7.5 0 01-7.5 7.5H7l-4 3v-3.8A7.5 7.5 0 011.5 11.5v-.5A7.5 7.5 0 019 3.5h3A7.5 7.5 0 0119 11v.5z" />
+          {isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing") && (
+            <div className="w-full max-w-2xl">
+              <div className="relative rounded-2xl overflow-hidden glow-primary">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full aspect-video bg-black/50 object-cover"
+                />
+                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
+                  <div className="glass rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-slate-200 font-medium">You</span>
+                  </div>
+                  {phase === "analyzing" && (
+                    <div className="glass rounded-lg px-4 py-2 flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
+                      <span className="text-xs text-cyan-400">{processingStep}</span>
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">Video KYC</p>
-                      <p className="text-[11px] text-slate-500">Keep your face centered and continue speaking naturally.</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex min-h-0 flex-1 items-center justify-center p-2.5 sm:p-3">
-                  <div className="relative aspect-square h-full w-full max-h-full max-w-[780px] overflow-hidden rounded-[28px] border border-slate-200/70 bg-slate-950/5">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.14),_transparent_56%)]" />
-                    <div className="absolute inset-0 bg-gradient-to-br from-[#1B2B6B]/10 via-transparent to-[#2563EB]/10 blur-3xl" />
-
-                    {mediaStream && (
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className={`absolute inset-0 h-full w-full object-cover transition duration-300 ${isCameraOff ? "opacity-0" : "opacity-100"}`}
-                      />
-                    )}
-
-                    {isCameraOff && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/40 text-white">
-                        <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl">
-                          <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                        <p className="text-sm font-semibold">Camera is turned off</p>
-                        <p className="mt-1 text-xs text-white/70">Use the camera control below to resume video.</p>
-                      </div>
-                    )}
-
-                    <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(15,23,42,0.22),transparent_30%)]" />
-
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="h-[82%] w-[72%] rounded-[48%] border-2 border-white/80 shadow-[0_0_0_9999px_rgba(15,23,42,0.12)]" />
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
+
+              {/* Manual input fallback */}
+              {phase === "conversation" && (
+                <div className="mt-4 space-y-2">
+                  
+                  {/* 👇 ADD THIS MESSAGE */}
+                  <p className="text-xs text-slate-400 text-center">
+                    VeriCall is AI and may make mistakes — if something looks incorrect, feel free to type it out.
+                  </p>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualInput}
+                      onChange={(e) => setManualInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
+                      placeholder="Type a message (or speak)..."
+                      className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
+                    />
+                    <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2136,11 +2137,7 @@ export default function CallPage() {
       fallback={
         <main className="min-h-screen animated-gradient-bg flex items-center justify-center">
           <div className="text-center">
-            <svg className="animate-spin h-10 w-10 text-indigo-400 mx-auto mb-4" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <p className="text-slate-400">Loading session...</p>
+            <VantageLoader text="Loading session..." size="lg" />
           </div>
         </main>
       }
