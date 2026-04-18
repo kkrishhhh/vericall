@@ -9,6 +9,7 @@ import TranscriptPanel from "../../components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
 import { LumaSpin } from "@/components/ui/luma-spin";
 import { AnimatedDownload } from "@/components/ui/animated-download";
+import { Waves } from "@/components/ui/wave-background";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 import VantageLoader from "@/components/ui/vantage-loader";
@@ -1265,11 +1266,18 @@ function CallPageInner() {
   const isLoanDocsStage = isOtpVerified && isLanguageConfirmed && phase === "loan-docs";
   const isOfferStage = isOtpVerified && isLanguageConfirmed && phase === "offer";
   const isConversationStage = isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing");
+  const isPreCallStage = !isOtpVerified || !isLanguageConfirmed;
 
   return (
    <main className={`relative ${isConversationStage ? "h-screen overflow-x-hidden overflow-y-hidden" : "min-h-screen overflow-x-hidden overflow-y-auto"} flex flex-col ${theme === "dark" ? "bg-slate-950" : "bg-white"}`}>
       <div className="orb orb-1" />
       <div className="orb orb-2" />
+
+      {isPreCallStage && (
+        <div className="pointer-events-none absolute inset-0 z-0 opacity-90">
+          <Waves strokeColor="#bfdbfe" backgroundColor="#eff6ff" pointerSize={0.35} />
+        </div>
+      )}
 
       {/* Change 4: Session Drop Overlay */}
       {sessionDropped && (
@@ -2073,18 +2081,8 @@ function CallPageInner() {
           )}
         </div>
 
-        {!isKycUploadStage && !isPreapprovalStage && !isLoanDocsStage && !isOfferStage && (
-        <div className={`w-full h-[360px] lg:h-full min-h-0 overflow-hidden border-t border-slate-200/70 bg-white/75 backdrop-blur-xl lg:border-t-0 ${isConversationStage ? "lg:flex-[0.24] lg:w-auto" : "lg:w-[360px]"}`}>
-          {isOtpVerified && !isLanguageConfirmed && (
-            <div className="flex h-full items-center justify-center px-6 text-center">
-              <div>
-                <p className="text-lg font-semibold text-slate-900">Language Selection</p>
-                <p className="text-sm text-slate-600 mt-2">Choose language to begin the KYC session.</p>
-              </div>
-            </div>
-          )}
-
-          {isConversationStage && (
+        {isConversationStage && (
+        <div className="w-full h-[360px] lg:h-full min-h-0 overflow-hidden border-t border-slate-200/70 bg-white/75 backdrop-blur-xl lg:border-t-0 lg:flex-[0.24] lg:w-auto">
             <TranscriptPanel
               messages={messages}
               isListening={isListening}
@@ -2097,92 +2095,6 @@ function CallPageInner() {
               onQuickReply={handleQuickReply}
               isMicMuted={isMicMuted}
             />
-          )}
-
-          {isOtpVerified && isLanguageConfirmed && phase === "kyc-upload" && (
-            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 2</p>
-                <h3 className="text-lg font-semibold text-white">KYC Verification</h3>
-                <p className="text-sm text-slate-400 mt-1">Upload Aadhaar + PAN and validate against live selfie.</p>
-              </div>
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Required KYC documents</p>
-                <div className="space-y-2 pt-1">
-                  {["Aadhaar Card", "PAN Card", "Selfie from call"].map((doc) => (
-                    <div key={doc} className="flex items-start gap-2 text-sm text-slate-200">
-                      <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
-                      <span>{doc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {isOtpVerified && isLanguageConfirmed && phase === "preapproval-review" && preapproval && (
-            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 3</p>
-                <h3 className="text-lg font-semibold text-white">Pre-Approved Offer</h3>
-                <p className="text-sm text-slate-400 mt-1">Review editable KYC data and download review PDF.</p>
-              </div>
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Loan type</p>
-                <p className="text-sm text-white font-medium">{currentLoanLabel}</p>
-                <p className="text-xs text-slate-400">Pre-approved amount</p>
-                <p className="text-sm text-white font-medium">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
-              </div>
-            </div>
-          )}
-
-          {isOtpVerified && isLanguageConfirmed && phase === "loan-docs" && preapproval && (
-            <div className="flex h-full flex-col px-4 py-4 gap-4 overflow-y-auto">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 4</p>
-                <h3 className="text-lg font-semibold text-white">Loan Document Check</h3>
-                <p className="text-sm text-slate-400 mt-1">Submit post-KYC documents for final approval.</p>
-              </div>
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Required documents for {currentLoanLabel}</p>
-                <div className="space-y-2 pt-1">
-                  {loanDocumentRequirements.map((doc) => (
-                    <div key={doc.key} className="flex items-start gap-2 text-sm text-slate-200">
-                      <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
-                      <span>{doc.label}{doc.required === false ? " (optional)" : ""}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {isOtpVerified && isLanguageConfirmed && phase === "offer" && finalDecision && preapproval && (
-            <div className="flex h-full flex-col px-4 py-4 gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/80">Step 5</p>
-                <h3 className="text-lg font-semibold text-white">Final Decision</h3>
-                <p className="text-sm text-slate-400 mt-1">Decision summary for {currentLoanLabel}.</p>
-              </div>
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 space-y-3">
-                <p className="text-xs text-slate-400">Status</p>
-                <p className="text-sm text-white font-medium">{finalDecision.decision_status}</p>
-                <p className="text-xs text-slate-400">Approved amount</p>
-                <p className="text-sm text-white font-medium">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
-                <p className="text-xs text-slate-400">Rate / tenure</p>
-                <p className="text-sm text-white font-medium">{finalDecision.interest_rate}% for {(finalDecision.tenure_options || []).join(", ")} months</p>
-              </div>
-            </div>
-          )}
-
-          {isOtpVerified && isLanguageConfirmed && phase === "error" && (
-            <div className="flex h-full items-center justify-center px-6 text-center">
-              <div>
-                <p className="text-lg font-semibold text-slate-900">Flow interrupted</p>
-                <p className="text-sm text-slate-600 mt-2">{journeyError || cameraError || "Please retry from the call start."}</p>
-              </div>
-            </div>
-          )}
         </div>
         )}
       </div>
