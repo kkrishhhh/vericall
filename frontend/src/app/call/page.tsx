@@ -14,6 +14,7 @@ import { IconContainer, Radar } from "@/components/ui/radar-effect";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 import VantageLoader from "@/components/ui/vantage-loader";
+import { useScroll } from "@/components/ui/use-scroll";
 
 const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
 const LANGUAGE_OPTIONS: { code: Language; label: string; native: string }[] = [
@@ -21,6 +22,27 @@ const LANGUAGE_OPTIONS: { code: Language; label: string; native: string }[] = [
   { code: "hi", label: "Hindi", native: "हिंदी" },
   { code: "mr", label: "Marathi", native: "मराठी" },
 ];
+
+const LIVENESS_COPY: Record<Language, { showTwo: string; showThree: string; ack: string; verified: string }> = {
+  en: {
+    showTwo: "Before we continue, please show 2 fingers to the camera.",
+    showThree: "Great. Now please show 3 fingers to the camera.",
+    ack: "Gesture received. Processing...",
+    verified: "Perfect. Liveness check verified. Let us continue.",
+  },
+  hi: {
+    showTwo: "आगे बढ़ने से पहले, कृपया कैमरे की ओर 2 उंगलियां दिखाएं।",
+    showThree: "बहुत अच्छा। अब कृपया कैमरे की ओर 3 उंगलियां दिखाएं।",
+    ack: "जेस्चर प्राप्त हुआ। प्रोसेस किया जा रहा है...",
+    verified: "सत्यापन सफल रहा। अब हम आगे बढ़ते हैं।",
+  },
+  mr: {
+    showTwo: "पुढे जाण्यापूर्वी कृपया कॅमेऱ्यासमोर 2 बोटे दाखवा.",
+    showThree: "छान. आता कृपया कॅमेऱ्यासमोर 3 बोटे दाखवा.",
+    ack: "जेस्चर मिळाला. प्रक्रिया सुरू आहे...",
+    verified: "छान. लायव्हनेस पडताळणी पूर्ण झाली. आता पुढे जाऊया.",
+  },
+};
 
 interface Message {
   role: "user" | "agent";
@@ -146,6 +168,7 @@ function CallPageInner() {
   );
   const [theme, setTheme] = useState<"dark" | "light">("light");
   const t = translations[activeLanguage] || translations.en;
+  const scrolled = useScroll(10);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -232,6 +255,9 @@ function CallPageInner() {
   const [offerLoadingComplete, setOfferLoadingComplete] = useState(false);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isLivenessVerified, setIsLivenessVerified] = useState(false);
+  const [livenessPhase, setLivenessPhase] = useState<"idle" | "show-2" | "ack-2" | "show-3" | "ack-3" | "verified">("idle");
+  const [livenessText, setLivenessText] = useState("");
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
   const [isDownloadAnimating, setIsDownloadAnimating] = useState(false);
   const [pendingDownloadType, setPendingDownloadType] = useState<"kyc" | "application" | null>(null);
@@ -247,6 +273,8 @@ function CallPageInner() {
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
   const initialGreetingRequestedRef = useRef(false);
   const agentRateLimitedUntilRef = useRef<number>(0);
+  const livenessStartedRef = useRef(false);
+  const livenessTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const configuredBackend = process.env.NEXT_PUBLIC_BACKEND_URL || "";
   const backendCandidates = uniqueUrls([
@@ -410,6 +438,11 @@ function CallPageInner() {
     window.location.href = "/";
   }, [stopMediaStream]);
 
+  const clearLivenessTimers = useCallback(() => {
+    livenessTimersRef.current.forEach((timer) => clearTimeout(timer));
+    livenessTimersRef.current = [];
+  }, []);
+
   const handleConfirmLanguage = () => {
     setVerifiedSession((prev) => {
       if (!prev) return prev;
@@ -539,8 +572,55 @@ function CallPageInner() {
     if (phase !== "conversation") {
       if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
       setSessionDropped(false);
+      clearLivenessTimers();
+      setLivenessPhase("idle");
+      setLivenessText("");
+      setIsLivenessVerified(false);
+      livenessStartedRef.current = false;
+      initialGreetingRequestedRef.current = false;
     }
-  }, [phase]);
+  }, [phase, clearLivenessTimers]);
+
+  useEffect(() => {
+    if (phase !== "conversation" || livenessStartedRef.current) return;
+    livenessStartedRef.current = true;
+
+    const script = LIVENESS_COPY[activeLanguage] || LIVENESS_COPY.en;
+    setAgentNotice("Running quick liveness check...");
+
+    setLivenessPhase("show-2");
+    setLivenessText(script.showTwo);
+    setMessages((prev) => [...prev, { role: "agent", content: script.showTwo, timestamp: getTimestamp() }]);
+
+    livenessTimersRef.current.push(setTimeout(() => {
+      setLivenessPhase("ack-2");
+      setLivenessText(script.ack);
+    }, 3000));
+
+    livenessTimersRef.current.push(setTimeout(() => {
+      setLivenessPhase("show-3");
+      setLivenessText(script.showThree);
+      setMessages((prev) => [...prev, { role: "agent", content: script.showThree, timestamp: getTimestamp() }]);
+    }, 4200));
+
+    livenessTimersRef.current.push(setTimeout(() => {
+      setLivenessPhase("ack-3");
+      setLivenessText(script.ack);
+    }, 7200));
+
+    livenessTimersRef.current.push(setTimeout(() => {
+      setLivenessPhase("verified");
+      setLivenessText(script.verified);
+      setMessages((prev) => [...prev, { role: "agent", content: script.verified, timestamp: getTimestamp() }]);
+      setAgentNotice("");
+      setIsLivenessVerified(true);
+    }, 9000));
+
+    livenessTimersRef.current.push(setTimeout(() => {
+      setLivenessPhase("idle");
+      setLivenessText("");
+    }, 10400));
+  }, [phase, activeLanguage]);
 
   // Handle KYC loading screen: show for 5 seconds when kyc-upload phase starts
   useEffect(() => {
@@ -594,7 +674,13 @@ function CallPageInner() {
       if (phaseRef.current !== "conversation") return;
       if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
       sessionDropTimerRef.current = setTimeout(() => {
-        setSessionDropped(true);
+        // Guard against false positives: only interrupt if the video track is still ended.
+        const stream = mediaStreamRef.current;
+        const activeVideoTrack = stream?.getVideoTracks?.()[0];
+        const isVideoGone = !stream || !activeVideoTrack || activeVideoTrack.readyState === "ended";
+        if (phaseRef.current === "conversation" && isVideoGone) {
+          setSessionDropped(true);
+        }
       }, 5000);
     };
     videoTrack.addEventListener("ended", onEnded);
@@ -731,6 +817,10 @@ function CallPageInner() {
 
   // ── 4. Send transcript to agent (stable callback — uses ref for history) ──
   const sendToAgent = useCallback(async (text: string) => {
+    if (!isLivenessVerified && text.trim()) {
+      setAgentNotice("Please complete the liveness check first.");
+      return;
+    }
     try {
       if (Date.now() < agentRateLimitedUntilRef.current) {
         return;
@@ -836,16 +926,28 @@ function CallPageInner() {
       setIsWaitingForAI(false);
       // silently fail — will retry on next interval
     }
-  }, [handleConversationComplete, activeLanguage]);
+  }, [handleConversationComplete, activeLanguage, isLivenessVerified]);
+
+  useEffect(() => {
+    if (phase !== "conversation" || !isLivenessVerified) return;
+    if (initialGreetingRequestedRef.current) return;
+    initialGreetingRequestedRef.current = true;
+    const timer = setTimeout(() => void sendToAgent(""), 700);
+    return () => clearTimeout(timer);
+  }, [phase, isLivenessVerified, sendToAgent]);
 
   const handleQuickReply = useCallback(
     (value: string) => {
       const trimmed = value.trim();
       if (!trimmed) return;
+      if (!isLivenessVerified) {
+        setAgentNotice("Please complete the liveness check first.");
+        return;
+      }
       setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: getTimestamp() }]);
       sendToAgent(trimmed);
     },
-    [sendToAgent],
+    [sendToAgent, isLivenessVerified],
   );
 
   // ── 5. Connect Deepgram STT (via sttService) ───────────────
@@ -871,22 +973,21 @@ function CallPageInner() {
         const conn = connectDeepgramStt(token, mediaStream, {
           onOpen: () => {
             setSttStatus("live");
-            if (!initialGreetingRequestedRef.current) {
-              initialGreetingRequestedRef.current = true;
-              setTimeout(() => void sendToAgent(""), 1000);
+            if (sessionDropTimerRef.current) {
+              clearTimeout(sessionDropTimerRef.current);
+              sessionDropTimerRef.current = null;
             }
+            setSessionDropped(false);
           },
           onError: () => setSttStatus("failed"),
           onClose: () => {
-            // Only count as drop while still in active conversation.
+            // STT socket can close transiently; do not hard-stop the session for this.
             if (phaseRef.current !== "conversation") return;
-            if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
-            sessionDropTimerRef.current = setTimeout(() => {
-              setSessionDropped(true);
-            }, 5000);
+            setAgentNotice("Voice connection interrupted. Please continue speaking or use text.");
           },
           onListeningChange: (v) => setIsListening(v),
           onFinalTranscript: (transcript) => {
+            if (!isLivenessVerified) return;
             if (!transcript.trim()) return;
             setMessages((prev) => [
               ...prev,
@@ -896,6 +997,7 @@ function CallPageInner() {
           },
           onInterim: (t) => setInterimText(t),
           onUtteranceEnd: () => {
+            if (!isLivenessVerified) return;
             const accumulated = pendingTranscriptRef.current.trim();
             if (accumulated) {
               pendingTranscriptRef.current = "";
@@ -908,6 +1010,7 @@ function CallPageInner() {
         sttConnRef.current = conn;
 
         agentTimerRef.current = setInterval(() => {
+          if (!isLivenessVerified) return;
           const accumulated = pendingTranscriptRef.current.trim();
           if (accumulated) {
             pendingTranscriptRef.current = "";
@@ -927,11 +1030,15 @@ function CallPageInner() {
       sttConnRef.current = null;
       if (agentTimerRef.current) clearInterval(agentTimerRef.current);
     };
-  }, [phase, mediaStream, sendToAgent, activeLanguage]);
+  }, [phase, mediaStream, sendToAgent, activeLanguage, isLivenessVerified]);
 
   // ── Manual text input fallback ────────────────────────────
   const handleManualSend = () => {
     if (!manualInput.trim()) return;
+    if (!isLivenessVerified) {
+      setAgentNotice("Please complete the liveness check first.");
+      return;
+    }
     setMessages((prev) => [...prev, { role: "user", content: manualInput, timestamp: getTimestamp() }]);
     sendToAgent(manualInput);
     setManualInput("");
@@ -1356,7 +1463,24 @@ function CallPageInner() {
       )}
 
       {/* Top Bar */}
-      <header className={`sticky top-0 z-40 border-b backdrop-blur-md ${theme === "dark" ? "border-slate-800 bg-slate-950/90" : "border-slate-200/80 bg-white/90"}`}>
+      <header className="sticky top-0 z-40 transition-all duration-500">
+        <div
+          className="mx-auto w-full transition-all duration-500 ease-out"
+          style={{
+            maxWidth: scrolled ? "56rem" : "100%",
+            marginTop: scrolled ? "10px" : "0",
+            borderRadius: scrolled ? "12px" : "0",
+            background: scrolled
+              ? (theme === "dark" ? "rgba(5,5,8,0.85)" : "rgba(255,255,255,0.85)")
+              : (theme === "dark" ? "rgba(2,6,23,0.9)" : "rgba(255,255,255,0.9)"),
+            backdropFilter: scrolled ? "blur(20px) saturate(180%)" : "blur(10px)",
+            WebkitBackdropFilter: scrolled ? "blur(20px) saturate(180%)" : "blur(10px)",
+            border: scrolled
+              ? (theme === "dark" ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.06)")
+              : "1px solid transparent",
+            boxShadow: scrolled ? "0 4px 20px rgba(0,0,0,0.08)" : "none",
+          }}
+        >
         <nav className="mx-auto flex h-12 w-full max-w-7xl items-center justify-between px-4 sm:px-5">
           <div className="flex items-center gap-2.5">
             <Image src="/pfl-logo.png" alt="Poonawalla Fincorp" width={150} height={44} className="h-7 w-auto object-contain" priority />
@@ -1432,6 +1556,7 @@ function CallPageInner() {
           )}
         </div>
         </nav>
+        </div>
       </header>
 
       {/* Main Content */}
@@ -1582,6 +1707,19 @@ function CallPageInner() {
                     muted
                     className="w-full aspect-video bg-black/50 object-cover"
                   />
+                  {livenessPhase !== "idle" && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/28 p-4 backdrop-blur-[1px]">
+                      <div className="w-full max-w-md rounded-2xl border border-blue-200 bg-white/95 px-4 py-4 text-center shadow-[0_12px_45px_rgba(37,99,235,0.16)]">
+                        <div className="mb-2 flex items-center justify-center gap-2">
+                          <span className={`h-2.5 w-2.5 rounded-full ${livenessPhase.includes("ack") || livenessPhase === "verified" ? "bg-emerald-500" : "bg-blue-500 animate-pulse"}`} />
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-700">
+                            {livenessPhase === "verified" ? "Liveness Verified" : "Liveness Check"}
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-slate-800">{livenessText}</p>
+                      </div>
+                    </div>
+                  )}
                   <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
                     <div className="glass rounded-lg px-3 py-1.5">
                       <span className="text-xs text-slate-200 font-medium">You</span>
