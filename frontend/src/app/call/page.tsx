@@ -4,12 +4,13 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } f
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Moon, Sun } from "lucide-react";
+import { FileCheck2, FileSearch, FolderSearch, ShieldCheck, Moon, Sun } from "lucide-react";
 import TranscriptPanel from "../../components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
 import { LumaSpin } from "@/components/ui/luma-spin";
 import { AnimatedDownload } from "@/components/ui/animated-download";
 import { Waves } from "@/components/ui/wave-background";
+import { IconContainer, Radar } from "@/components/ui/radar-effect";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 import VantageLoader from "@/components/ui/vantage-loader";
@@ -1907,12 +1908,52 @@ function CallPageInner() {
           {isOtpVerified && isLanguageConfirmed && phase === "offer" && finalDecision && preapproval && (
             <>
               {showOfferLoadingScreen && (
-                <div className="w-full flex items-center justify-center py-12 sm:py-16">
-                  <div className="text-center">
-                    <div className="flex justify-center mb-6">
-                      <LumaSpin />
+                <div className="w-full flex items-center justify-center py-10 sm:py-14 px-3">
+                  <div className="entry-zoom-card w-full max-w-4xl rounded-[28px] border border-blue-100 bg-gradient-to-b from-white to-blue-50/70 p-6 shadow-[0_10px_45px_rgba(37,99,235,0.12)] sm:p-8">
+                    <div className="text-center mb-5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-blue-600">Step 5</p>
+                      <h3 className="mt-2 text-2xl sm:text-[30px] font-bold tracking-tight text-slate-900">Verifying Submitted Documents</h3>
+                      <p className="mt-1.5 text-sm text-slate-600">Running identity, policy, and risk checks before final decision.</p>
                     </div>
-                    <p className="text-sm text-slate-600">Preparing your final decision summary...</p>
+
+                    <div className="relative mx-auto flex h-[340px] w-full max-w-3xl items-center justify-center overflow-hidden rounded-2xl border border-blue-100 bg-white/80">
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.10),transparent_70%)]" />
+
+                      <div className="absolute left-6 top-8 hidden md:block">
+                        <IconContainer
+                          delay={0.1}
+                          text="OCR Extraction"
+                          icon={<FileSearch className="h-6 w-6 text-blue-600" />}
+                        />
+                      </div>
+
+                      <div className="absolute right-6 top-10 hidden md:block">
+                        <IconContainer
+                          delay={0.2}
+                          text="Field Matching"
+                          icon={<FolderSearch className="h-6 w-6 text-blue-600" />}
+                        />
+                      </div>
+
+                      <div className="absolute left-12 bottom-10 hidden md:block">
+                        <IconContainer
+                          delay={0.3}
+                          text="Compliance"
+                          icon={<ShieldCheck className="h-6 w-6 text-blue-600" />}
+                        />
+                      </div>
+
+                      <div className="absolute right-10 bottom-12 hidden md:block">
+                        <IconContainer
+                          delay={0.4}
+                          text="Decision Ready"
+                          icon={<FileCheck2 className="h-6 w-6 text-blue-600" />}
+                        />
+                      </div>
+
+                      <Radar className="absolute -bottom-16" />
+                      <div className="absolute bottom-0 z-[41] h-px w-full bg-gradient-to-r from-transparent via-blue-300 to-transparent" />
+                    </div>
                   </div>
                 </div>
               )}
