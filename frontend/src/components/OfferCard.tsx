@@ -371,7 +371,7 @@ export default function OfferCard({
         {/* Footer */}
         <div className="px-6 py-3 bg-white/[0.02] text-center">
           <p className="text-xs text-slate-500">
-            Powered by VeriCall AI · Poonawalla Fincorp · All decisions are pre-qualifications only
+            Powered by Vantage AI · Poonawalla Fincorp · All decisions are pre-qualifications only
           </p>
         </div>
       </div>

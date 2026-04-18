@@ -154,6 +154,18 @@
     animation: shimmer 3s ease-in-out infinite;
   }
 
+  .entry-zoom-card {
+    animation: card-zoom-in 700ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform-origin: center center;
+    will-change: transform, opacity;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .entry-zoom-card {
+      animation: none;
+    }
+  }
+
   .status-badge-verified {
     background: rgba(16, 185, 129, 0.1);
     color: var(--color-success);
@@ -213,6 +225,24 @@
 @keyframes marquee {
   0% { transform: translateX(0); }
   100% { transform: translateX(-50%); }
+}
+
+@keyframes card-zoom-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
+    filter: blur(1px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.01) translateY(0);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════

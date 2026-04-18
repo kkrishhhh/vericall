@@ -3,8 +3,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import TranscriptPanel from "@/components/TranscriptPanel";
+import Image from "next/image";
+import TranscriptPanel from "../../components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
+import { LumaSpin } from "@/components/ui/luma-spin";
+import { AnimatedDownload } from "@/components/ui/animated-download";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 
@@ -93,6 +96,28 @@ function prettifyLoanType(loanType: string) {
     .trim();
 }
 
+function explainDecisionReason(reason: string) {
+  const normalized = (reason || "").trim().toUpperCase();
+  const knownReasons: Record<string, string> = {
+    KYC_NOT_VERIFIED: "KYC checks could not be fully verified with the submitted evidence.",
+    HIGH_RISK: "The risk engine flagged this application as high risk.",
+    POLICY_MISMATCH: "The application did not satisfy one or more policy rules.",
+    DOCUMENTS_INCOMPLETE: "Required supporting documents were incomplete.",
+    INCOME_INSUFFICIENT: "Verified income was below policy requirement for the requested amount.",
+  };
+
+  if (knownReasons[normalized]) return knownReasons[normalized];
+
+  if (!reason) return "The decision engine returned a non-specific reason.";
+
+  const cleaned = reason
+    .replace(/[_-]+/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+
+  return `${cleaned}.`;
+}
+
 function uniqueUrls(values: string[]): string[] {
   const out: string[] = [];
   for (const value of values) {
@@ -128,6 +153,7 @@ function CallPageInner() {
   const [otpInput, setOtpInput] = useState("");
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpError, setOtpError] = useState("");
+  const [cameraError, setCameraError] = useState("");
   const [verifiedSession, setVerifiedSession] = useState<{ full_name: string; mobile_number: string; language: string } | null>(null);
   /** Set when getUserMedia succeeds — drives video element + STT (refs miss first paint while still on "connecting"). */
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
@@ -192,6 +218,17 @@ function CallPageInner() {
     missing_required_documents?: string[];
   } | null>(null);
   const [addressCheckError, setAddressCheckError] = useState("");
+  const [showKycLoadingScreen, setShowKycLoadingScreen] = useState(false);
+  const [kycLoadingComplete, setKycLoadingComplete] = useState(false);
+  const [showPreapprovalLoadingScreen, setShowPreapprovalLoadingScreen] = useState(false);
+  const [preapprovalLoadingComplete, setPreapprovalLoadingComplete] = useState(false);
+  const [showOfferLoadingScreen, setShowOfferLoadingScreen] = useState(false);
+  const [offerLoadingComplete, setOfferLoadingComplete] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [showDownloadPopup, setShowDownloadPopup] = useState(false);
+  const [isDownloadAnimating, setIsDownloadAnimating] = useState(false);
+  const [pendingDownloadType, setPendingDownloadType] = useState<"kyc" | "application" | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const sessionStartedAtRef = useRef<string>(new Date().toISOString());
   const sessionIdRef = useRef<string>(
@@ -211,8 +248,19 @@ function CallPageInner() {
     "http://127.0.0.1:8001",
     "http://127.0.0.1:8000",
   ]);
+  const fetchBaseCandidates = uniqueUrls([
+    "",
+    configuredBackend,
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8000",
+  ]);
   const BACKEND = backendCandidates[0] || "http://127.0.0.1:8001";
   const effectivePhone = verifiedSession?.mobile_number || phone;
+
+  const buildApiUrl = (baseUrl: string, path: string) => {
+    if (!baseUrl) return path;
+    return `${baseUrl.replace(/\/+$/, "")}${path}`;
+  };
 
   const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
     const controller = new AbortController();
@@ -226,9 +274,9 @@ function CallPageInner() {
 
   const fetchWithBackendFallback = async (path: string, options: RequestInit = {}, timeoutMs = 12000) => {
     let lastError: unknown = null;
-    for (const baseUrl of backendCandidates) {
+    for (const baseUrl of fetchBaseCandidates) {
       try {
-        const res = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
+        const res = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, timeoutMs);
         return { res, baseUrl };
       } catch (err) {
         lastError = err;
@@ -303,30 +351,125 @@ function CallPageInner() {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
     setMediaStream(null);
+    setIsMicMuted(false);
+    setIsCameraOff(false);
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
   }, []);
+
+  const handleToggleMic = useCallback(() => {
+    setIsMicMuted((current) => {
+      const next = !current;
+      sttConnRef.current?.setMuted(next);
+      mediaStreamRef.current?.getAudioTracks().forEach((track) => {
+        track.enabled = !next;
+      });
+      return next;
+    });
+  }, []);
+
+  const handleToggleCamera = useCallback(() => {
+    setIsCameraOff((current) => {
+      const next = !current;
+      mediaStreamRef.current?.getVideoTracks().forEach((track) => {
+        track.enabled = !next;
+      });
+      return next;
+    });
+  }, []);
+
+  const handleEndCall = useCallback(() => {
+    stopMediaStream();
+    window.location.href = "/";
+  }, [stopMediaStream]);
 
   // ── 1. Initialize camera + mic ─────────────────────────────
   useEffect(() => {
     if (!isOtpVerified || !isLanguageConfirmed) return;
     let cancelled = false;
     let stream: MediaStream | null = null;
+
+    const mediaAttempts: MediaStreamConstraints[] = [
+      { video: { facingMode: "user" }, audio: true },
+      { video: true, audio: true },
+      { video: { facingMode: "user" }, audio: false },
+      { video: true, audio: false },
+    ];
+
+    const describeMediaError = (err: unknown) => {
+      const mediaErr = err as DOMException | undefined;
+      const detail = mediaErr?.name ? ` (${mediaErr.name}${mediaErr.message ? `: ${mediaErr.message}` : ""})` : "";
+
+      if (typeof window !== "undefined" && !window.isSecureContext) {
+        return `Camera access needs HTTPS or localhost.${detail}`;
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        return `Camera API unavailable in this browser/session.${detail}`;
+      }
+
+      if (mediaErr?.name === "NotAllowedError") {
+        return `Camera or microphone permission was denied. Please allow access in browser settings.${detail}`;
+      }
+      if (mediaErr?.name === "NotFoundError") {
+        return `No camera was detected. Connect a camera and try again.${detail}`;
+      }
+      if (mediaErr?.name === "NotReadableError") {
+        return `Camera is in use by another app. Close it and retry.${detail}`;
+      }
+      if (mediaErr?.name === "OverconstrainedError") {
+        return `Camera constraints are unsupported on this device. Retrying with relaxed settings failed.${detail}`;
+      }
+      if (mediaErr?.name === "SecurityError") {
+        return `Browser blocked media access due to security policy.${detail}`;
+      }
+
+      return `Unable to access camera right now. Please retry.${detail}`;
+    };
+
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
-          audio: true,
-        });
+        setCameraError("");
+        setAgentNotice("");
+
+        if (typeof window !== "undefined" && !window.isSecureContext) {
+          throw new DOMException("Insecure context", "SecurityError");
+        }
+
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new DOMException("mediaDevices.getUserMedia is unavailable", "NotSupportedError");
+        }
+
+        let lastAttemptError: unknown = null;
+        for (const constraints of mediaAttempts) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            const usingAudio = constraints.audio === true;
+            if (!usingAudio) {
+              setAgentNotice("Microphone unavailable - use text input if voice is not captured.");
+            }
+            break;
+          } catch (attemptErr) {
+            lastAttemptError = attemptErr;
+          }
+        }
+
+        if (!stream) {
+          throw lastAttemptError || new Error("Unable to initialize media stream");
+        }
+
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         mediaStreamRef.current = stream;
         setMediaStream(stream);
+        setIsMicMuted(false);
+        setIsCameraOff(false);
         setPhase("conversation");
-      } catch {
+      } catch (err: unknown) {
+        setCameraError(describeMediaError(err));
         setPhase("error");
       }
     })();
@@ -361,6 +504,45 @@ function CallPageInner() {
     if (phase !== "conversation") {
       if (sessionDropTimerRef.current) clearTimeout(sessionDropTimerRef.current);
       setSessionDropped(false);
+    }
+  }, [phase]);
+
+  // Handle KYC loading screen: show for 5 seconds when kyc-upload phase starts
+  useEffect(() => {
+    if (phase === "kyc-upload") {
+      setShowKycLoadingScreen(true);
+      setKycLoadingComplete(false);
+      const timer = setTimeout(() => {
+        setShowKycLoadingScreen(false);
+        setKycLoadingComplete(true);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [phase]);
+
+  // Handle Preapproval loading screen: show for 5 seconds when preapproval-review phase starts
+  useEffect(() => {
+    if (phase === "preapproval-review") {
+      setShowPreapprovalLoadingScreen(true);
+      setPreapprovalLoadingComplete(false);
+      const timer = setTimeout(() => {
+        setShowPreapprovalLoadingScreen(false);
+        setPreapprovalLoadingComplete(true);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [phase]);
+
+  // Handle final decision loading screen: show for 5 seconds when offer phase starts
+  useEffect(() => {
+    if (phase === "offer") {
+      setShowOfferLoadingScreen(true);
+      setOfferLoadingComplete(false);
+      const timer = setTimeout(() => {
+        setShowOfferLoadingScreen(false);
+        setOfferLoadingComplete(true);
+      }, 5000);
+      return () => clearTimeout(timer);
     }
   }, [phase]);
 
@@ -470,7 +652,17 @@ function CallPageInner() {
         if (!preRes.ok) throw new Error("Failed to generate pre-approval");
 
         const pre = (await preRes.json()) as PreapprovalData;
-        setPreapproval(pre);
+        const requestedAmount = Number(pre.requested_loan_amount || interviewPayload.requested_loan_amount || 0);
+        const normalizedEligible = Number(pre.eligible_amount || 0);
+        const cappedEligibleAmount = requestedAmount > 0
+          ? Math.min(normalizedEligible, requestedAmount)
+          : normalizedEligible;
+
+        setPreapproval({
+          ...pre,
+          requested_loan_amount: requestedAmount,
+          eligible_amount: cappedEligibleAmount,
+        });
         setCustomerSnapshot({ interview: interviewPayload });
 
         // Block if consent is false
@@ -603,6 +795,16 @@ function CallPageInner() {
       // silently fail — will retry on next interval
     }
   }, [handleConversationComplete, activeLanguage]);
+
+  const handleQuickReply = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: getTimestamp() }]);
+      sendToAgent(trimmed);
+    },
+    [sendToAgent],
+  );
 
   // ── 5. Connect Deepgram STT (via sttService) ───────────────
   useEffect(() => {
@@ -740,7 +942,7 @@ function CallPageInner() {
     }
   };
 
-  const handleDownloadKycPdf = async () => {
+  const downloadKycPdf = async () => {
     if (!preapproval) return;
     setIsGeneratingKycPdf(true);
     try {
@@ -770,6 +972,51 @@ function CallPageInner() {
     } finally {
       setIsGeneratingKycPdf(false);
     }
+  };
+
+  const downloadApplicationPdf = async () => {
+    try {
+      const res = await fetch(`${BACKEND}/api/documents/${sessionIdRef.current}/application/pdf`);
+      if (!res.ok) throw new Error("Failed to generate application PDF");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${sessionIdRef.current}-application.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setJourneyError("Could not generate final application PDF right now.");
+    }
+  };
+
+  const handleDownloadKycPdf = () => {
+    if (!preapproval || isGeneratingKycPdf || isDownloadAnimating) return;
+    setPendingDownloadType("kyc");
+    setShowDownloadPopup(true);
+    setIsDownloadAnimating(true);
+  };
+
+  const handleDownloadApplicationPdf = () => {
+    if (isDownloadAnimating) return;
+    setPendingDownloadType("application");
+    setShowDownloadPopup(true);
+    setIsDownloadAnimating(true);
+  };
+
+  const handleDownloadAnimationComplete = () => {
+    setIsDownloadAnimating(false);
+    void (async () => {
+      if (pendingDownloadType === "kyc") {
+        await downloadKycPdf();
+      } else if (pendingDownloadType === "application") {
+        await downloadApplicationPdf();
+      }
+      setPendingDownloadType(null);
+      setShowDownloadPopup(false);
+    })();
   };
 
   const handleProceedAfterKycReview = () => {
@@ -875,7 +1122,7 @@ function CallPageInner() {
         /* ignore */
       }
 
-      if (verifyData.matches && verifyData.documents_complete !== false) {
+      if (verifyData.documents_complete !== false) {
         const decisionRes = await fetch(`${BACKEND}/api/decision/evaluate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -883,7 +1130,7 @@ function CallPageInner() {
             income: preapproval.monthly_income,
             requested_amount: preapproval.requested_loan_amount,
             eligible_amount: preapproval.eligible_amount,
-            kyc_status: verifyData.matches ? "VERIFIED" : "FAILED",
+            kyc_status: verifyData.matches ? "VERIFIED" : "REVIEW",
             document_status: "VERIFIED",
             risk_flag: verifyData.selfie_match === false ? "HIGH_RISK" : "LOW_RISK",
           }),
@@ -923,7 +1170,7 @@ function CallPageInner() {
                   .map(([key, file]) => ({ key, filename: file?.name || "" })),
               },
               risk: {
-                kyc_status: verifyData.matches ? "VERIFIED" : "FAILED",
+                kyc_status: verifyData.matches ? "VERIFIED" : "REVIEW",
                 risk_flag: verifyData.selfie_match === false ? "HIGH_RISK" : "LOW_RISK",
                 document_verification: verifyData,
               },
@@ -960,10 +1207,7 @@ function CallPageInner() {
         }
         setPhase("offer");
       } else {
-        const missingMsg = (verifyData.missing_required_documents || []).length
-          ? ` Missing required documents: ${(verifyData.missing_required_documents || []).join(", ")}.`
-          : "";
-        setAddressCheckError(`Verification is incomplete.${missingMsg}`);
+        setAddressCheckError("");
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unable to verify address right now.";
@@ -975,8 +1219,14 @@ function CallPageInner() {
     }
   };
 
+  const isKycUploadStage = isOtpVerified && isLanguageConfirmed && phase === "kyc-upload";
+  const isPreapprovalStage = isOtpVerified && isLanguageConfirmed && phase === "preapproval-review";
+  const isLoanDocsStage = isOtpVerified && isLanguageConfirmed && phase === "loan-docs";
+  const isOfferStage = isOtpVerified && isLanguageConfirmed && phase === "offer";
+  const isConversationStage = isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing");
+
   return (
-    <main className="relative min-h-screen animated-gradient-bg overflow-hidden flex flex-col">
+   <main className="relative h-screen bg-white overflow-x-hidden overflow-y-hidden flex flex-col">
       <div className="orb orb-1" />
       <div className="orb orb-2" />
 
@@ -999,111 +1249,167 @@ function CallPageInner() {
         </div>
       )}
 
-      {/* Top Bar */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-4 glass border-b border-white/[0.06]">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center">
-            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="text-sm font-semibold text-white">VeriCall Session</h1>
-            <p className="text-xs text-slate-400">Poonawalla Fincorp</p>
+      {showDownloadPopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/35 px-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-lg">
+            <AnimatedDownload
+              isAnimating={isDownloadAnimating}
+              onAnimationComplete={handleDownloadAnimationComplete}
+            />
           </div>
         </div>
-        <div className="flex items-center gap-3">
+      )}
+
+      {/* Top Bar */}
+      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+        <nav className="mx-auto flex h-12 w-full max-w-7xl items-center justify-between px-4 sm:px-5">
+          <div className="flex items-center gap-2.5">
+            <Image src="/pfl-logo.png" alt="Poonawalla Fincorp" width={150} height={44} className="h-7 w-auto object-contain" priority />
+            <div className="h-6 w-px shrink-0 bg-slate-200" />
+            <div className="leading-tight">
+              <span className="block text-[15px] font-bold tracking-wide text-slate-900">VANTAGE</span>
+              <span className="block text-[8px] font-medium text-slate-500">by Poonawalla Fincorp</span>
+            </div>
+          </div>
+
+          <div className="hidden md:flex items-center gap-1">
+            <a href="/#how-it-works" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900">
+              {/* How It Works */}
+            </a>
+            <a href="/#security" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900">
+              {/* Security */}
+            </a>
+          </div>
+
+          <div className="flex items-center gap-2">
           {phase === "conversation" && agentNotice && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/25 max-w-[280px]">
-              <span className="text-xs text-amber-300 font-medium leading-tight">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-100 border border-amber-200 max-w-[280px]">
+              <span className="text-xs text-amber-700 font-medium leading-tight">
                 {agentNotice}
               </span>
             </div>
           )}
           {phase === "conversation" && sttStatus === "failed" && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/25 max-w-[220px]">
-              <span className="text-xs text-amber-300 font-medium leading-tight">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-100 border border-amber-200 max-w-[220px]">
+              <span className="text-xs text-amber-700 font-medium leading-tight">
                 Voice unavailable — use the text box (check mic permission & Deepgram key)
               </span>
             </div>
           )}
           {phase === "conversation" && sttStatus === "live" && isListening && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <div className="flex items-center gap-1.5 rounded-full bg-emerald-100 border border-emerald-200 px-2.5 py-1">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
-              <span className="text-xs text-emerald-400 font-medium">{t.listening}</span>
+              <span className="text-[11px] text-emerald-700 font-medium">{t.listening}</span>
             </div>
           )}
           {phase === "conversation" && sttStatus === "connecting" && (
-            <div className="text-xs text-slate-400">Starting voice…</div>
+            <div className="text-[11px] text-slate-500">Starting voice…</div>
           )}
           {phase === "analyzing" && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-              <svg className="animate-spin h-3 w-3 text-amber-400" viewBox="0 0 24 24">
+            <div className="flex items-center gap-1.5 rounded-full bg-amber-100 border border-amber-200 px-2.5 py-1">
+              <svg className="h-3 w-3 animate-spin text-amber-600" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span className="text-xs text-amber-400 font-medium">Processing</span>
+              <span className="text-[11px] text-amber-700 font-medium">Processing</span>
             </div>
           )}
         </div>
+        </nav>
       </header>
 
       {/* Main Content */}
-      <div className="relative z-10 flex flex-col lg:flex-row h-[calc(100vh-65px)]">
+      <div className="relative z-10 mx-auto flex h-[calc(100vh-48px)] w-full max-w-[1600px] flex-col gap-3 px-3 py-3 lg:flex-row lg:px-4">
         {/* Left: Video */}
-        <div className="flex-1 flex flex-col items-center justify-center p-4 lg:p-8">
+        <div className={`flex min-h-0 flex-col items-center overflow-y-auto p-3 lg:p-4 ${isConversationStage ? "lg:flex-[0.76]" : "lg:flex-1"} ${(isKycUploadStage || isPreapprovalStage || isLoanDocsStage) ? "justify-start" : "justify-center"}`}>
           {!isOtpVerified && (
-            <div className="w-full max-w-md mx-auto">
-              <div className="glass-card p-8 space-y-5">
-                <div className="text-center">
-                  <h2 className="text-xl font-semibold text-white">Verify OTP to Start Video KYC</h2>
-                  <p className="text-sm text-slate-400 mt-2">
-                    Enter the 6-digit OTP sent to your email with the KYC link.
-                  </p>
+            <div className="fixed inset-0 z-20 flex items-center justify-center bg-white px-4">
+              <svg
+                className="absolute inset-0 h-full w-full pointer-events-none"
+                viewBox="0 0 1440 900"
+                fill="none"
+                preserveAspectRatio="xMidYMid slice"
+                aria-hidden="true"
+              >
+                <path d="M-120 95 C 180 170, 360 10, 700 95 S 1240 210, 1580 120" stroke="#1B2B6B" strokeOpacity="0.16" strokeWidth="2.5" />
+                <path d="M-180 170 C 140 270, 360 70, 700 160 S 1240 280, 1620 200" stroke="#2563EB" strokeOpacity="0.15" strokeWidth="2.5" />
+                <path d="M-100 250 C 190 310, 380 150, 710 235 S 1250 340, 1590 285" stroke="#1B2B6B" strokeOpacity="0.16" strokeWidth="2.5" />
+                <path d="M-140 325 C 160 410, 390 220, 730 315 S 1260 430, 1600 360" stroke="#2563EB" strokeOpacity="0.17" strokeWidth="2.5" />
+                <path d="M-160 400 C 170 490, 400 300, 740 390 S 1260 510, 1600 445" stroke="#1B2B6B" strokeOpacity="0.17" strokeWidth="2.5" />
+                <path d="M-120 475 C 190 560, 430 370, 760 470 S 1280 595, 1620 530" stroke="#2563EB" strokeOpacity="0.15" strokeWidth="2.5" />
+                <path d="M-150 550 C 170 640, 420 455, 750 545 S 1270 675, 1610 610" stroke="#1B2B6B" strokeOpacity="0.16" strokeWidth="2.5" />
+                <path d="M-180 625 C 140 705, 410 520, 760 615 S 1280 750, 1630 690" stroke="#2563EB" strokeOpacity="0.15" strokeWidth="2.5" />
+                <path d="M-120 700 C 200 770, 430 595, 770 685 S 1300 810, 1620 760" stroke="#1B2B6B" strokeOpacity="0.16" strokeWidth="2.5" />
+                <path d="M-170 770 C 140 840, 420 665, 780 755 S 1310 870, 1650 825" stroke="#2563EB" strokeOpacity="0.17" strokeWidth="2.5" />
+                <path d="M-90 835 C 230 885, 460 740, 790 825 S 1320 920, 1600 880" stroke="#1B2B6B" strokeOpacity="0.14" strokeWidth="2.5" />
+                <path d="M-130 885 C 210 935, 450 790, 800 875 S 1330 960, 1640 930" stroke="#2563EB" strokeOpacity="0.14" strokeWidth="2.5" />
+              </svg>
+
+              <div className="entry-zoom-card relative z-10 w-full max-w-[400px] rounded-3xl border border-indigo-100 bg-white p-10 shadow-[0_4px_40px_rgba(27,43,107,0.08)]">
+                <div className="mx-auto mb-5 flex h-13 w-13 items-center justify-center rounded-2xl border border-blue-200 bg-gradient-to-br from-indigo-50 to-blue-100">
+                  <svg className="h-6 w-6 text-[#1B2B6B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <rect x="5" y="11" width="14" height="10" rx="2" />
+                    <path d="M8 11V7a4 4 0 018 0v4" />
+                    <circle cx="12" cy="16" r="1" fill="currentColor" />
+                  </svg>
                 </div>
-                <div>
-                  <label className="block text-sm text-slate-300 mb-2">OTP</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={otpInput}
-                    onChange={(e) => {
-                      setOtpInput(e.target.value.replace(/\D/g, ""));
-                      setOtpError("");
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        void handleVerifyLinkOtp();
-                      }
-                    }}
-                    placeholder="Enter 6-digit OTP"
-                    className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white text-center tracking-[0.4em] placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-                  />
-                  {otpError && <p className="text-xs text-red-300 mt-2">{otpError}</p>}
-                </div>
-                <button
-                  onClick={() => {
-                    void handleVerifyLinkOtp();
+
+                <h2 className="mb-2 text-center text-xl font-bold tracking-tight text-slate-900">Verify Your Identity</h2>
+                <p className="mb-7 text-center text-sm leading-relaxed text-slate-500">
+                  Enter the 6-digit OTP sent to your email with the Video KYC link.
+                </p>
+
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-slate-700">One-time passcode</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otpInput}
+                  onChange={(e) => {
+                    setOtpInput(e.target.value.replace(/\D/g, ""));
+                    setOtpError("");
                   }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleVerifyLinkOtp();
+                  }}
+                  placeholder="• • • • • •"
+                  className="mb-2 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-4 text-center text-2xl font-bold tracking-[0.5em] text-[#1B2B6B] placeholder-slate-300 transition-all focus:border-blue-500 focus:bg-white focus:shadow-[0_0_0_3px_rgba(37,99,235,0.1)] focus:outline-none"
+                />
+                {otpError && <p className="mb-3 text-center text-xs text-red-500">{otpError}</p>}
+                <p className="mb-6 text-center text-[11px] text-slate-400">Check spam if you don&apos;t see it in your inbox</p>
+
+                <button
+                  onClick={() => void handleVerifyLinkOtp()}
                   disabled={otpVerifying || otpInput.trim().length !== 6}
-                  className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full rounded-2xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)] disabled:cursor-not-allowed disabled:transform-none disabled:opacity-40"
                 >
-                  {otpVerifying ? "Verifying OTP..." : "Verify OTP"}
+                  {otpVerifying ? "Verifying…" : "Verify OTP"}
                 </button>
+
+                <div className="mt-5 flex items-center justify-center gap-4 border-t border-slate-100 pt-4">
+                  <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" /> RBI V-CIP
+                  </span>
+                  <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" /> Encrypted
+                  </span>
+                  <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" /> DPDPA 2023
+                  </span>
+                </div>
               </div>
             </div>
           )}
 
           {isOtpVerified && !isLanguageConfirmed && (
-            <div className="w-full max-w-md mx-auto">
-              <div className="glass-card p-8 space-y-5">
-                <div className="text-center">
-                  <h2 className="text-xl font-semibold text-white">Select Language</h2>
-                  <p className="text-sm text-slate-400 mt-2">
+            <div className="w-full max-w-2xl mx-auto py-3 sm:py-4">
+              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+                <div className="mb-6 text-center">
+                  <h2 className="text-[30px] font-bold tracking-tight text-slate-900 leading-[1.1]">Select Language</h2>
+                  <p className="mt-2 text-sm text-slate-500">
                     Choose your preferred language before starting Video KYC.
                   </p>
                 </div>
@@ -1114,18 +1420,18 @@ function CallPageInner() {
                       onClick={() => setActiveLanguage(option.code)}
                       className={`w-full flex items-center justify-between rounded-xl border px-4 py-3 text-left transition ${
                         activeLanguage === option.code
-                          ? "border-indigo-500 bg-indigo-500/15 text-white"
-                          : "border-white/[0.1] bg-white/[0.03] text-slate-200 hover:bg-white/[0.06]"
+                          ? "border-indigo-300 bg-indigo-50 text-slate-900"
+                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                       }`}
                     >
-                      <span className="text-sm font-medium">{option.label}</span>
-                      <span className="text-xs text-slate-400">{option.native}</span>
+                      <span className="text-sm font-semibold">{option.label}</span>
+                      <span className="text-xs text-slate-500">{option.native}</span>
                     </button>
                   ))}
                 </div>
                 <button
                   onClick={() => setIsLanguageConfirmed(true)}
-                  className="w-full btn-primary"
+                  className="mt-6 w-full rounded-2xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)]"
                 >
                   Continue
                 </button>
@@ -1145,198 +1451,293 @@ function CallPageInner() {
             </div>
           )}
 
-          {isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing") && (
-            <div className="w-full max-w-2xl">
-              <div className="relative rounded-2xl overflow-hidden glow-primary">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full aspect-video bg-black/50 object-cover"
-                />
-                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
-                  <div className="glass rounded-lg px-3 py-1.5">
-                    <span className="text-xs text-slate-200 font-medium">You</span>
-                  </div>
-                  {phase === "analyzing" && (
-                    <div className="glass rounded-lg px-4 py-2 flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          {isConversationStage && (
+            <div className="w-full h-full">
+              <div className="entry-zoom-card flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200/70 bg-white/75 shadow-[0_20px_80px_rgba(15,23,42,0.12)] backdrop-blur-xl">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-3 py-2.5 sm:px-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#1B2B6B] to-[#2563EB] text-white shadow-[0_8px_25px_rgba(27,43,107,0.22)]">
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 11.5a7.5 7.5 0 01-7.5 7.5H7l-4 3v-3.8A7.5 7.5 0 011.5 11.5v-.5A7.5 7.5 0 019 3.5h3A7.5 7.5 0 0119 11v.5z" />
                       </svg>
-                      <span className="text-xs text-cyan-400">{processingStep}</span>
                     </div>
-                  )}
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Video KYC</p>
+                      <p className="text-[11px] text-slate-500">Keep your face centered and continue speaking naturally.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex min-h-0 flex-1 items-center justify-center p-2.5 sm:p-3">
+                  <div className="relative aspect-square h-full w-full max-h-full max-w-[780px] overflow-hidden rounded-[28px] border border-slate-200/70 bg-slate-950/5">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.14),_transparent_56%)]" />
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#1B2B6B]/10 via-transparent to-[#2563EB]/10 blur-3xl" />
+
+                    {mediaStream && (
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className={`absolute inset-0 h-full w-full object-cover transition duration-300 ${isCameraOff ? "opacity-0" : "opacity-100"}`}
+                      />
+                    )}
+
+                    {isCameraOff && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/40 text-white">
+                        <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl">
+                          <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                        <p className="text-sm font-semibold">Camera is turned off</p>
+                        <p className="mt-1 text-xs text-white/70">Use the camera control below to resume video.</p>
+                      </div>
+                    )}
+
+                    <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(15,23,42,0.22),transparent_30%)]" />
+
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="h-[82%] w-[72%] rounded-[48%] border-2 border-white/80 shadow-[0_0_0_9999px_rgba(15,23,42,0.12)]" />
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              {/* Manual input fallback */}
-              {phase === "conversation" && (
-                <div className="mt-4 space-y-2">
-                  
-                  {/* 👇 ADD THIS MESSAGE */}
-                  <p className="text-xs text-slate-400 text-center">
-                    VeriCall is AI and may make mistakes — if something looks incorrect, feel free to type it out.
-                  </p>
-
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={manualInput}
-                      onChange={(e) => setManualInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
-                      placeholder="Type a message (or speak)..."
-                      className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
-                    />
-                    <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
           {isOtpVerified && isLanguageConfirmed && phase === "kyc-upload" && (
-            <div className="w-full max-w-md mx-auto space-y-4">
-              <div className="glass-card p-8">
-                <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 2: Complete KYC</h2>
-                <p className="text-sm text-slate-400 mb-6 text-center">Upload Aadhaar and PAN to complete identity verification.</p>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Aadhaar Card</label>
+            <>
+              {showKycLoadingScreen && (
+                <div className="w-full max-w-2xl mx-auto flex items-center justify-center py-8 sm:py-12">
+                  <div className="text-center">
+                    <div className="flex justify-center mb-6">
+                      <LumaSpin />
+                    </div>
+                    <p className="text-sm text-slate-600">Processing your KYC details...</p>
+                  </div>
+                </div>
+              )}
+
+              {!showKycLoadingScreen && (
+            <div className="w-full max-w-2xl mx-auto py-3 sm:py-4">
+              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+                <div className="mb-4">
+                  <p
+                    className={`text-[10px] font-semibold uppercase tracking-[0.28em] text-[#2563EB] transition-all duration-700 ${
+                      kycLoadingComplete
+                        ? "translate-y-0 opacity-100"
+                        : "translate-y-2 opacity-0"
+                    }`}
+                    style={{
+                      transitionProperty: "transform, opacity",
+                    }}
+                  >
+                    Step 2
+                  </p>
+                </div>
+                <div className="mb-4 text-center md:text-left">
+                  <h2 className="text-[30px] font-bold tracking-tight text-slate-900 leading-[1.1]">Complete KYC Document Upload</h2>
+                  <p className="mt-1.5 text-sm text-slate-500">Upload Aadhaar and PAN to complete identity verification.</p>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-700">Aadhaar Card</label>
                     <input
+                      id="kyc-aadhaar-input"
                       type="file"
                       accept="image/*,.pdf"
                       onChange={(e) => setKycAadhaarFile(e.target.files?.[0] || null)}
-                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                      className="hidden"
                     />
+                    <label htmlFor="kyc-aadhaar-input" className="flex cursor-pointer items-center justify-center rounded-xl border border-indigo-200 bg-white px-4 py-3 text-sm font-semibold text-[#1B2B6B] transition hover:border-indigo-300 hover:bg-indigo-50">
+                      Choose Aadhaar File
+                    </label>
+                    <p className="mt-2 truncate text-xs text-slate-500">{kycAadhaarFile?.name || "No file selected"}</p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">PAN Card</label>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-700">PAN Card</label>
                     <input
+                      id="kyc-pan-input"
                       type="file"
                       accept="image/*,.pdf"
                       onChange={(e) => setKycPanFile(e.target.files?.[0] || null)}
-                      className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                      className="hidden"
                     />
-                  </div>
-                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                    <div className="flex items-center justify-between gap-4 mb-3">
-                      <div>
-                        <p className="text-sm font-medium text-emerald-200">Live selfie capture</p>
-                        <p className="text-xs text-emerald-300/70">Captured automatically before camera shutdown.</p>
-                      </div>
-                      <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-200">
-                        {capturedSelfie ? "Captured" : "Missing"}
-                      </span>
-                    </div>
-                    {capturedSelfie ? (
-                      <img
-                        src={capturedSelfie}
-                        alt="Captured selfie"
-                        className="h-40 w-full rounded-xl object-cover border border-emerald-500/20"
-                      />
-                    ) : (
-                      <p className="text-xs text-amber-300">
-                        We could not capture your selfie in this run. Please restart the session.
-                      </p>
-                    )}
+                    <label htmlFor="kyc-pan-input" className="flex cursor-pointer items-center justify-center rounded-xl border border-indigo-200 bg-white px-4 py-3 text-sm font-semibold text-[#1B2B6B] transition hover:border-indigo-300 hover:bg-indigo-50">
+                      Choose PAN File
+                    </label>
+                    <p className="mt-2 truncate text-xs text-slate-500">{kycPanFile?.name || "No file selected"}</p>
                   </div>
                 </div>
+
+                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-800">Live selfie capture</p>
+                      <p className="text-xs text-emerald-700/80">Captured automatically before camera shutdown.</p>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${capturedSelfie ? "bg-emerald-200 text-emerald-900" : "bg-amber-100 text-amber-800"}`}>
+                      {capturedSelfie ? "Captured" : "Missing"}
+                    </span>
+                  </div>
+                  {capturedSelfie ? (
+                    <img
+                      src={capturedSelfie}
+                      alt="Captured selfie"
+                      className="mx-auto aspect-square w-full max-w-[420px] rounded-xl border border-emerald-200 object-cover"
+                    />
+                  ) : (
+                    <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      We could not capture your selfie in this run. Please restart the session.
+                    </p>
+                  )}
+                </div>
+
+                {journeyError && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    {journeyError}
+                  </div>
+                )}
+
                 <button
                   disabled={isVerifyingKycDocs || !kycAadhaarFile || !kycPanFile || !capturedSelfie}
-                  className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="mt-4 w-full rounded-2xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)] disabled:cursor-not-allowed disabled:transform-none disabled:opacity-40"
                   onClick={() => {
                     void handleVerifyKycDocuments();
                   }}
                 >
                   {isVerifyingKycDocs ? "Verifying KYC..." : "Verify KYC"}
                 </button>
+
                 {kycVerifyResult && (
-                  <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${kycVerifyResult.kyc_status === "VERIFIED" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200" : "bg-amber-500/10 border-amber-500/30 text-amber-200"}`}>
-                    <p className="font-medium">{kycVerifyResult.kyc_status === "VERIFIED" ? "KYC verified" : "KYC verification failed"}</p>
+                  <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${kycVerifyResult.kyc_status === "VERIFIED" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                    <p className="font-semibold">{kycVerifyResult.kyc_status === "VERIFIED" ? "KYC verified" : "KYC verification failed"}</p>
                     <p className="mt-1 text-xs opacity-90">{kycVerifyResult.reason}</p>
                   </div>
                 )}
               </div>
             </div>
+              )}
+            </>
           )}
 
           {isOtpVerified && isLanguageConfirmed && phase === "preapproval-review" && preapproval && (
-            <div className="w-full max-w-md mx-auto space-y-4">
-              <div className="glass-card p-8">
-                <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 3: Pre-Approved Offer</h2>
-                <p className="text-sm text-slate-400 mb-6 text-center">Review and edit KYC details, then download the KYC review PDF.</p>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Applicant Name</label>
-                    <input value={editableKycData.applicant_name} onChange={(e) => setEditableKycData((p) => ({ ...p, applicant_name: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Aadhaar Number</label>
-                    <input value={editableKycData.aadhaar_number} onChange={(e) => setEditableKycData((p) => ({ ...p, aadhaar_number: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">PAN Number</label>
-                    <input value={editableKycData.pan_number} onChange={(e) => setEditableKycData((p) => ({ ...p, pan_number: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">DOB</label>
-                      <input value={editableKycData.dob} onChange={(e) => setEditableKycData((p) => ({ ...p, dob: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+            <>
+              {showPreapprovalLoadingScreen && (
+                <div className="w-full flex items-center justify-center py-12 sm:py-16">
+                  <div className="text-center">
+                    <div className="flex justify-center mb-6">
+                      <LumaSpin />
                     </div>
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">Gender</label>
-                      <input value={editableKycData.gender} onChange={(e) => setEditableKycData((p) => ({ ...p, gender: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/[0.1] text-sm text-white" />
+                    <p className="text-sm text-slate-600">Processing your pre-approval details...</p>
+                  </div>
+                </div>
+              )}
+
+              {!showPreapprovalLoadingScreen && (
+                <div className="w-full max-w-2xl mx-auto py-6 sm:py-8 flex flex-col gap-6">
+                  <div className="text-center">
+                    <p
+                      className={`text-[10px] font-semibold uppercase tracking-[0.28em] text-[#2563EB] transition-all duration-700 ${
+                        preapprovalLoadingComplete
+                          ? "translate-y-0 opacity-100"
+                          : "translate-y-2 opacity-0"
+                      }`}
+                      style={{
+                        transitionProperty: "transform, opacity",
+                      }}
+                    >
+                      Step 3
+                    </p>
+                    <h2 className="text-[32px] font-bold tracking-tight text-slate-900 leading-[1.1] mt-2">Pre-Approved Offer</h2>
+                    <p className="mt-2 text-sm text-slate-500">Review and edit your KYC details, then download the KYC review PDF.</p>
+                  </div>
+
+                  <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">Applicant Name</label>
+                        <input value={editableKycData.applicant_name} onChange={(e) => setEditableKycData((p) => ({ ...p, applicant_name: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">Aadhaar Number</label>
+                        <input value={editableKycData.aadhaar_number} onChange={(e) => setEditableKycData((p) => ({ ...p, aadhaar_number: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">PAN Number</label>
+                        <input value={editableKycData.pan_number} onChange={(e) => setEditableKycData((p) => ({ ...p, pan_number: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">DOB</label>
+                          <input value={editableKycData.dob} onChange={(e) => setEditableKycData((p) => ({ ...p, dob: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">Gender</label>
+                          <input value={editableKycData.gender} onChange={(e) => setEditableKycData((p) => ({ ...p, gender: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700 mb-2">Pre-Approved Amount</p>
+                      <p className="text-3xl font-bold text-emerald-900">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
+                    </div>
+
+                    <div className="mt-6 grid grid-cols-2 gap-3">
+                      <button
+                        disabled={isGeneratingKycPdf || isDownloadAnimating}
+                        className="rounded-2xl border border-indigo-200 bg-white px-4 py-3.5 text-sm font-semibold text-[#1B2B6B] transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => {
+                          handleDownloadKycPdf();
+                        }}
+                      >
+                        {isGeneratingKycPdf || isDownloadAnimating ? "Preparing PDF..." : "Download PDF"}
+                      </button>
+                      <button 
+                        className="rounded-2xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] px-4 py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)]"
+                        onClick={handleProceedAfterKycReview}
+                      >
+                        Next
+                      </button>
                     </div>
                   </div>
                 </div>
-                <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-cyan-100">
-                  Pre-approved amount: INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}
-                </div>
-                <div className="mt-5 grid grid-cols-2 gap-3">
-                  <button
-                    disabled={isGeneratingKycPdf}
-                    className="btn-secondary"
-                    onClick={() => {
-                      void handleDownloadKycPdf();
-                    }}
-                  >
-                    {isGeneratingKycPdf ? "Generating..." : "Download KYC PDF"}
-                  </button>
-                  <button className="btn-primary" onClick={handleProceedAfterKycReview}>Next</button>
-                </div>
-              </div>
-            </div>
+              )}
+            </>
           )}
 
           {isOtpVerified && isLanguageConfirmed && phase === "loan-docs" && (
-            <div className="w-full max-w-md mx-auto space-y-4">
-              <div className="glass-card p-8">
-                <h2 className="text-xl font-semibold text-white mb-2 text-center">Step 4: Loan Documents</h2>
-                <p className="text-sm text-slate-400 mb-6 text-center">Upload loan-type specific documents for {currentLoanLabel}.</p>
+            <div className="w-full max-w-2xl mx-auto py-6 sm:py-8 flex flex-col gap-6">
+              <div className="text-center">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#2563EB]">Step 4</p>
+                <h2 className="text-[32px] font-bold tracking-tight text-slate-900 leading-[1.1] mt-2">Loan Documents</h2>
+                <p className="mt-2 text-sm text-slate-500">Upload loan-type specific documents for {currentLoanLabel}.</p>
+              </div>
+
+              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
                 <div className="space-y-4">
                   {loanDocumentRequirements.map((requirement) => {
                     if (requirement.key === "address_proof") {
                       return (
                         <div key={requirement.key}>
-                          <label className="block text-sm font-medium text-slate-300 mb-2">{requirement.label}</label>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">{requirement.label}</label>
                           <input
                             type="file"
                             accept="image/*,.pdf"
                             onChange={(e) => setAddressFile(e.target.files?.[0] || null)}
-                            className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                            className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-200 file:text-[#1B2B6B] hover:file:bg-indigo-100"
                           />
+                          <p className="mt-1 text-xs text-slate-500">{addressFile?.name || "No file selected"}</p>
                         </div>
                       );
                     }
                     return (
-                      <div key={requirement.key} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
-                        <p className="text-sm font-medium text-slate-100 mb-2">{requirement.label}</p>
+                      <div key={requirement.key}>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">{requirement.label}</label>
                         <input
                           type="file"
                           accept="image/*,.pdf"
@@ -1346,149 +1747,178 @@ function CallPageInner() {
                               [requirement.key]: e.target.files?.[0] || null,
                             }))
                           }
-                          className="w-full px-4 py-2 rounded-xl bg-white/[0.05] border border-white/[0.1] text-sm text-white focus:outline-none focus:border-indigo-500 transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30"
+                          className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-200 file:text-[#1B2B6B] hover:file:bg-indigo-100"
                         />
+                        <p className="mt-1 text-xs text-slate-500">{extraDocuments[requirement.key]?.name || "No file selected"}</p>
                       </div>
                     );
                   })}
                 </div>
+
                 <button
                   disabled={isUploadingDocs || !capturedSelfie || !addressFile}
-                  className="w-full btn-primary flex items-center justify-center gap-3 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className={`w-full mt-6 rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isUploadingDocs
+                      ? "bg-gradient-to-r from-[#1B2B6B] via-[#2563EB] to-[#1D4ED8] animate-gradient bg-[length:220%_220%]"
+                      : "bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)]"
+                  }`}
                   onClick={() => {
                     void handleDocumentSubmit();
                   }}
                 >
                   {isUploadingDocs ? "Verifying Documents..." : "Submit Loan Documents"}
                 </button>
+
                 {addressCheck && (
                   <div
-                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+                    className={`mt-5 rounded-xl border px-4 py-3 text-sm ${
                       addressCheck.matches
-                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
-                        : "bg-amber-500/10 border-amber-500/30 text-amber-200"
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                        : "bg-amber-50 border-amber-200 text-amber-800"
                     }`}
                   >
-                    <p className="font-medium">
-                      {addressCheck.matches ? "Address verification passed" : "Address verification failed"}
+                    <p className="font-semibold">
+                      {addressCheck.matches ? "✓ Address verification passed" : "Address verification needs review"}
                     </p>
                     <p className="mt-1 text-xs opacity-90">{addressCheck.reason}</p>
+                    {!addressCheck.matches && (
+                      <p className="mt-1 text-xs opacity-90">
+                        We will continue this application and route it for additional review if needed.
+                      </p>
+                    )}
                     <p className="mt-1 text-xs opacity-90">
-                      Name: {addressCheck.name_match ? "match" : "mismatch"} · DOB: {addressCheck.dob_match ? "match" : "mismatch"} · Gender: {addressCheck.gender_match ? "match" : "mismatch"}
+                      Name: {addressCheck.name_match ? "✓ match" : "✗ mismatch"} · DOB: {addressCheck.dob_match ? "✓ match" : "✗ mismatch"} · Gender: {addressCheck.gender_match ? "✓ match" : "✗ mismatch"}
                     </p>
                     <p className="mt-1 text-xs opacity-90">
-                      Aadhaar: {addressCheck.aadhaar_number_valid ? "valid" : "invalid"} · PAN: {addressCheck.pan_number_valid ? "valid" : "invalid"}
+                      Aadhaar: {addressCheck.aadhaar_number_valid ? "✓ valid" : "✗ invalid"} · PAN: {addressCheck.pan_number_valid ? "✓ valid" : "✗ invalid"}
                     </p>
                     {addressCheck.pan_has_address != null && (
                       <p className="mt-1 text-xs opacity-90">
-                        PAN address present: {addressCheck.pan_has_address ? "yes" : "no"}
+                        PAN address: {addressCheck.pan_has_address ? "present" : "not present"}
                       </p>
                     )}
                     {addressCheck.selfie_match_score != null && (
                       <p className="mt-1 text-xs opacity-90">
-                        Selfie match score: {Math.round((addressCheck.selfie_match_score || 0) * 100)}%
-                        {addressCheck.selfie_match === false ? " · mismatch flagged" : ""}
+                        Selfie match: {Math.round((addressCheck.selfie_match_score || 0) * 100)}%
                       </p>
                     )}
-                    {addressCheck.blood_group && (
-                      <p className="mt-1 text-xs opacity-90">Blood Group: {addressCheck.blood_group}</p>
-                    )}
-                    {addressCheck.required_documents?.length ? (
+                    {addressCheck.missing_required_documents?.length ? (
                       <div className="mt-2">
-                        <p className="text-xs opacity-90 mb-1">Required documents</p>
+                        <p className="text-xs font-medium mb-1">Missing required documents</p>
                         <ul className="space-y-1 text-xs opacity-90">
-                          {addressCheck.required_documents.map((doc) => (
+                          {addressCheck.missing_required_documents.map((doc) => (
                             <li key={doc}>• {doc}</li>
                           ))}
                         </ul>
                       </div>
                     ) : null}
-                    {addressCheck.documents_complete === false && (
-                      <div className="mt-2">
-                        <p className="text-xs opacity-90 mb-1">Missing required documents</p>
-                        <ul className="space-y-1 text-xs opacity-90">
-                          {(addressCheck.missing_required_documents || []).map((doc) => (
-                            <li key={doc}>• {doc}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {(addressCheck.proof_city || addressCheck.geo_city) && (
-                      <p className="mt-1 text-xs opacity-90">
-                        Proof city: {addressCheck.proof_city || "N/A"} · Current city: {addressCheck.geo_city || "N/A"} ·
-                        {" "}
-                        City check:{" "}
-                        {addressCheck.city_match == null ? "not available" : addressCheck.city_match ? "match" : "mismatch"}
-                      </p>
-                    )}
-                    {addressCheck.aadhaar_photo_base64 && (
-                      <div className="mt-3">
-                        <p className="text-xs opacity-90 mb-2">Extracted Aadhaar photo</p>
-                        <img
-                          src={addressCheck.aadhaar_photo_base64}
-                          alt="Extracted Aadhaar profile"
-                          className="h-20 w-20 rounded-lg object-cover border border-white/20"
-                        />
-                      </div>
-                    )}
                   </div>
                 )}
-                {addressCheckError && (
-                  <p className="mt-3 text-xs text-red-300">
+                {addressCheckError && !addressCheck && (
+                  <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                     {addressCheckError}
-                  </p>
+                  </div>
                 )}
               </div>
             </div>
           )}
 
           {isOtpVerified && isLanguageConfirmed && phase === "offer" && finalDecision && preapproval && (
-            <div className="w-full max-w-xl mx-auto glass-card p-6 space-y-4">
-              <h2 className="text-2xl font-bold text-white">Final Loan Decision</h2>
-              <p className="text-lg text-slate-200">Your loan has been <span className="font-semibold">{finalDecision.decision_status}</span></p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08]">
-                  <p className="text-slate-400 text-xs">Final approved amount</p>
-                  <p className="text-white font-semibold">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
+            <>
+              {showOfferLoadingScreen && (
+                <div className="w-full flex items-center justify-center py-12 sm:py-16">
+                  <div className="text-center">
+                    <div className="flex justify-center mb-6">
+                      <LumaSpin />
+                    </div>
+                    <p className="text-sm text-slate-600">Preparing your final decision summary...</p>
+                  </div>
                 </div>
-                <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08]">
-                  <p className="text-slate-400 text-xs">Interest rate</p>
-                  <p className="text-white font-semibold">{finalDecision.interest_rate}%</p>
-                </div>
-                <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08] sm:col-span-2">
-                  <p className="text-slate-400 text-xs">Tenure options</p>
-                  <p className="text-white font-semibold">{(finalDecision.tenure_options || []).join(", ")} months</p>
-                </div>
-              </div>
+              )}
 
-              <p className="text-xs text-slate-400">Reason: {finalDecision.reason}</p>
+              {!showOfferLoadingScreen && (
+                <div className="w-full max-w-2xl mx-auto py-6 sm:py-8 flex flex-col gap-6">
+                  <div className="text-center">
+                    <p
+                      className={`text-[10px] font-semibold uppercase tracking-[0.28em] text-[#2563EB] transition-all duration-700 ${
+                        offerLoadingComplete
+                          ? "translate-y-0 opacity-100"
+                          : "translate-y-2 opacity-0"
+                      }`}
+                      style={{ transitionProperty: "transform, opacity" }}
+                    >
+                      Step 5
+                    </p>
+                    <h2 className="text-[32px] font-bold tracking-tight text-slate-900 leading-[1.1] mt-2">Final Loan Decision</h2>
+                    <p className="mt-2 text-sm text-slate-500">Final outcome with key reasoning signals from your verification journey.</p>
+                  </div>
 
-              <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                <a
-                  href={`${BACKEND}/api/documents/${sessionIdRef.current}/application/pdf`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-center text-sm text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
-                >
-                  Download application PDF
-                </a>
-                <Link
-                  href="/dashboard"
-                  className="text-center text-sm text-indigo-300 hover:text-indigo-200 underline underline-offset-2"
-                >
-                  Open applications dashboard
-                </Link>
-                <Link
-                  href="/"
-                  className="text-center text-sm text-slate-400 hover:text-slate-300 underline underline-offset-2"
-                >
-                  Start new session
-                </Link>
-              </div>
-            </div>
+                  <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Decision Status</p>
+                      <p className={`text-3xl font-bold ${finalDecision.decision_status === "APPROVED" ? "text-emerald-700" : finalDecision.decision_status === "HOLD" ? "text-amber-700" : "text-rose-700"}`}>
+                        {finalDecision.decision_status}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Final Approved Amount</p>
+                        <p className="text-xl font-bold text-slate-900">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Interest Rate</p>
+                        <p className="text-xl font-bold text-slate-900">{finalDecision.interest_rate}%</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:col-span-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Tenure Options</p>
+                        <p className="text-lg font-semibold text-slate-900">{(finalDecision.tenure_options || []).join(", ") || "N/A"} months</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700 mb-1">Decision Reasoning</p>
+                      <p className="text-lg font-bold text-indigo-950">{explainDecisionReason(finalDecision.reason)}</p>
+                      <div className="mt-3 space-y-1.5 text-sm text-indigo-900/90">
+                        <p>Raw engine reason: {finalDecision.reason || "Not provided"}</p>
+                        <p>Risk flag: {finalDecision.risk_flag || "Not provided"}</p>
+                        <p>KYC verification: {kycVerifyResult?.kyc_status || "Not available"}</p>
+                        <p>Document completeness: {addressCheck?.documents_complete === false ? "Incomplete" : "Complete"}</p>
+                        {addressCheck?.selfie_match_score != null && (
+                          <p>Selfie match confidence: {Math.round((addressCheck.selfie_match_score || 0) * 100)}%</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-6 flex flex-col sm:flex-row gap-2 justify-center">
+                      <button
+                        type="button"
+                        onClick={handleDownloadApplicationPdf}
+                        disabled={isDownloadAnimating}
+                        className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-[#1B2B6B] transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Download application PDF
+                      </button>
+                      <Link
+                        href="/dashboard"
+                        className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-[#1B2B6B] transition hover:bg-indigo-50"
+                      >
+                        Open applications dashboard
+                      </Link>
+                      <Link
+                        href="/"
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        Start new session
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
-          {isOtpVerified && isLanguageConfirmed && phase === "offer" && offerData && !finalDecision && (
+          {isOtpVerified && isLanguageConfirmed && phase === "offer" && offerData && !finalDecision && !showOfferLoadingScreen && (
             <div className="w-full max-w-md mx-auto space-y-4">
               <OfferCard
                 status={offerData.status as string}
@@ -1532,14 +1962,14 @@ function CallPageInner() {
                 }
               />
               <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                <a
-                  href={`${BACKEND}/api/documents/${sessionIdRef.current}/application/pdf`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-center text-sm text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                <button
+                  type="button"
+                  onClick={handleDownloadApplicationPdf}
+                  disabled={isDownloadAnimating}
+                  className="text-center text-sm text-cyan-300 hover:text-cyan-200 underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Download application PDF
-                </a>
+                </button>
                 <Link
                   href="/dashboard"
                   className="text-center text-sm text-indigo-300 hover:text-indigo-200 underline underline-offset-2"
@@ -1561,8 +1991,8 @@ function CallPageInner() {
               <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
                 <span className="text-3xl">⚠️</span>
               </div>
-              <h2 className="text-xl font-semibold text-white mb-2">Connection Error</h2>
-              <p className="text-sm text-slate-400 mb-4">Unable to access camera or connect to the server</p>
+              <h2 className="text-xl font-semibold text-slate-900 mb-2">Connection Error</h2>
+              <p className="text-sm text-slate-600 mb-4">{cameraError || journeyError || "Unable to access camera or connect to the server"}</p>
               <button onClick={() => window.location.reload()} className="btn-primary">
                 Try Again
               </button>
@@ -1570,32 +2000,30 @@ function CallPageInner() {
           )}
         </div>
 
-        {/* Right: Dynamic Stage Panel */}
-        <div className="lg:w-[380px] w-full h-[300px] lg:h-auto glass border-t lg:border-t-0 lg:border-l border-white/[0.06]">
-          {!isOtpVerified && (
-            <div className="flex h-full items-center justify-center px-6 text-center">
-              <div>
-                <p className="text-lg font-semibold text-white">Email Link Verification</p>
-                <p className="text-sm text-slate-400 mt-2">Complete OTP verification to continue.</p>
-              </div>
-            </div>
-          )}
-
+        {!isKycUploadStage && !isPreapprovalStage && !isLoanDocsStage && !isOfferStage && (
+        <div className={`w-full h-[360px] lg:h-full min-h-0 overflow-hidden border-t border-slate-200/70 bg-white/75 backdrop-blur-xl lg:border-t-0 lg:border-l ${isConversationStage ? "lg:flex-[0.24] lg:w-auto" : "lg:w-[360px]"}`}>
           {isOtpVerified && !isLanguageConfirmed && (
             <div className="flex h-full items-center justify-center px-6 text-center">
               <div>
-                <p className="text-lg font-semibold text-white">Language Selection</p>
-                <p className="text-sm text-slate-400 mt-2">Choose language to begin the KYC session.</p>
+                <p className="text-lg font-semibold text-slate-900">Language Selection</p>
+                <p className="text-sm text-slate-600 mt-2">Choose language to begin the KYC session.</p>
               </div>
             </div>
           )}
 
-          {isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing") && (
+          {isConversationStage && (
             <TranscriptPanel
               messages={messages}
               isListening={isListening}
               interimText={interimText}
               isWaitingForAI={isWaitingForAI}
+              customerName={verifiedSession?.full_name || "Nausheen"}
+              manualInput={manualInput}
+              onManualInputChange={(value: string) => setManualInput(value)}
+              onManualSend={handleManualSend}
+              onQuickReply={handleQuickReply}
+              isMicMuted={isMicMuted}
+              stageLabel={phase === "conversation" ? "Employment" : "Verification"}
             />
           )}
 
@@ -1678,20 +2106,24 @@ function CallPageInner() {
           {isOtpVerified && isLanguageConfirmed && phase === "error" && (
             <div className="flex h-full items-center justify-center px-6 text-center">
               <div>
-                <p className="text-lg font-semibold text-white">Flow interrupted</p>
-                <p className="text-sm text-slate-400 mt-2">Please retry from the call start.</p>
+                <p className="text-lg font-semibold text-slate-900">Flow interrupted</p>
+                <p className="text-sm text-slate-600 mt-2">{journeyError || cameraError || "Please retry from the call start."}</p>
               </div>
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Change 2: RBI Compliance Disclaimer Footer */}
-      <footer className="relative z-10 py-2 px-4 text-center bg-black/40 border-t border-white/[0.06]">
+      {!isKycUploadStage && !isOfferStage && (
+      // <footer className="relative z-10 py-2 px-4 text-center bg-black/40 border-t border-white/[0.06]">
+        <footer className="relative z-10 py-2 px-4 text-center">
         <p className="text-[10px] text-slate-500 leading-tight">
           This V-CIP session is recorded in compliance with RBI Master KYC Direction 2016. Data encrypted and stored securely per RBI guidelines.
         </p>
       </footer>
+      )}
     </main>
   );
 }

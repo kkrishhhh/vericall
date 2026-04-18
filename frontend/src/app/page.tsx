@@ -143,6 +143,12 @@ function LandingPageContent() {
     "http://127.0.0.1:8001",
     "http://127.0.0.1:8000",
   ]);
+  const fetchBaseCandidates = uniqueUrls([
+    "",
+    BACKEND,
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8000",
+  ]);
   const [activeBackendUrl, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -355,12 +361,17 @@ function LandingPageContent() {
     }
   };
 
+  const buildApiUrl = (baseUrl: string, path: string) => {
+    if (!baseUrl) return path;
+    return `${baseUrl.replace(/\/+$/, "")}${path}`;
+  };
+
   const fetchWithBackendFallback = async (path: string, options: RequestInit = {}, timeoutMs = 12000) => {
     let lastError: unknown = null;
-    for (const baseUrl of backendCandidates) {
+    for (const baseUrl of fetchBaseCandidates) {
       try {
-        const res = await fetchWithTimeout(`${baseUrl}${path}`, options, timeoutMs);
-        setActiveBackendUrl(baseUrl);
+        const res = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, timeoutMs);
+        setActiveBackendUrl(baseUrl || "same-origin");
         return { res, baseUrl };
       } catch (err) {
         lastError = err;
