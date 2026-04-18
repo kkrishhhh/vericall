@@ -1069,6 +1069,20 @@ function CallPageInner() {
     setPhase("loan-docs");
   };
 
+  const handleGoToPreviousStep = () => {
+    if (phase === "preapproval-review") {
+      setPhase("kyc-upload");
+      return;
+    }
+    if (phase === "loan-docs") {
+      setPhase("preapproval-review");
+      return;
+    }
+    if (phase === "offer") {
+      setPhase("loan-docs");
+    }
+  };
+
   const handleDocumentSubmit = async () => {
     if (!addressFile || !preapproval || !capturedSelfie || !kycAadhaarImageData || !kycPanImageData) return;
     setJourneyError("");
@@ -1769,7 +1783,13 @@ function CallPageInner() {
                       <p className="text-3xl font-bold text-emerald-900">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
                     </div>
 
-                    <div className="mt-6 grid grid-cols-2 gap-3">
+                    <div className="mt-6 grid grid-cols-3 gap-3">
+                      <button
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                        onClick={handleGoToPreviousStep}
+                      >
+                        Previous
+                      </button>
                       <button
                         disabled={isGeneratingKycPdf || isDownloadAnimating}
                         className="rounded-2xl border border-indigo-200 bg-white px-4 py-3.5 text-sm font-semibold text-[#1B2B6B] transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1837,19 +1857,28 @@ function CallPageInner() {
                   })}
                 </div>
 
-                <button
-                  disabled={isUploadingDocs || !capturedSelfie || !addressFile}
-                  className={`w-full mt-6 rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                    isUploadingDocs
-                      ? "bg-gradient-to-r from-[#1B2B6B] via-[#2563EB] to-[#1D4ED8] animate-gradient bg-[length:220%_220%]"
-                      : "bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)]"
-                  }`}
-                  onClick={() => {
-                    void handleDocumentSubmit();
-                  }}
-                >
-                  {isUploadingDocs ? "Verifying Documents..." : "Submit Loan Documents"}
-                </button>
+                <div className="mt-6 grid grid-cols-2 gap-3">
+                  <button
+                    disabled={isUploadingDocs}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={handleGoToPreviousStep}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    disabled={isUploadingDocs || !capturedSelfie || !addressFile}
+                    className={`rounded-2xl py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isUploadingDocs
+                        ? "bg-gradient-to-r from-[#1B2B6B] via-[#2563EB] to-[#1D4ED8] animate-gradient bg-[length:220%_220%]"
+                        : "bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)]"
+                    }`}
+                    onClick={() => {
+                      void handleDocumentSubmit();
+                    }}
+                  >
+                    {isUploadingDocs ? "Verifying Documents..." : "Submit Loan Documents"}
+                  </button>
+                </div>
 
                 {addressCheck && (
                   <div
@@ -1908,15 +1937,9 @@ function CallPageInner() {
           {isOtpVerified && isLanguageConfirmed && phase === "offer" && finalDecision && preapproval && (
             <>
               {showOfferLoadingScreen && (
-                <div className="w-full flex items-center justify-center py-10 sm:py-14 px-3">
-                  <div className="entry-zoom-card w-full max-w-4xl rounded-[28px] border border-blue-100 bg-gradient-to-b from-white to-blue-50/70 p-6 shadow-[0_10px_45px_rgba(37,99,235,0.12)] sm:p-8">
-                    <div className="text-center mb-5">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-blue-600">Step 5</p>
-                      <h3 className="mt-2 text-2xl sm:text-[30px] font-bold tracking-tight text-slate-900">Verifying Submitted Documents</h3>
-                      <p className="mt-1.5 text-sm text-slate-600">Running identity, policy, and risk checks before final decision.</p>
-                    </div>
-
-                    <div className="relative mx-auto flex h-[340px] w-full max-w-3xl items-center justify-center overflow-hidden rounded-2xl border border-blue-100 bg-white/80">
+                <div className="w-full min-h-[calc(100vh-170px)] flex items-center justify-center px-3 py-4">
+                  <div className="entry-zoom-card w-full max-w-4xl rounded-[28px] border border-blue-100 bg-gradient-to-b from-white to-blue-50/70 p-4 shadow-[0_10px_45px_rgba(37,99,235,0.12)] sm:p-6">
+                    <div className="relative mx-auto flex h-[300px] w-full max-w-3xl items-center justify-center overflow-hidden rounded-2xl border border-blue-100 bg-white/80">
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.10),transparent_70%)]" />
 
                       <div className="absolute left-6 top-8 hidden md:block">
@@ -1951,7 +1974,7 @@ function CallPageInner() {
                         />
                       </div>
 
-                      <Radar className="absolute -bottom-16" />
+                      <Radar className="absolute -bottom-4" />
                       <div className="absolute bottom-0 z-[41] h-px w-full bg-gradient-to-r from-transparent via-blue-300 to-transparent" />
                     </div>
                   </div>
@@ -2013,6 +2036,13 @@ function CallPageInner() {
                     </div>
 
                     <div className="mt-6 flex flex-col sm:flex-row gap-2 justify-center">
+                      <button
+                        type="button"
+                        onClick={handleGoToPreviousStep}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        Previous Step
+                      </button>
                       <button
                         type="button"
                         onClick={handleDownloadApplicationPdf}
