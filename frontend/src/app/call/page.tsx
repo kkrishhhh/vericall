@@ -11,6 +11,7 @@ import { LumaSpin } from "@/components/ui/luma-spin";
 import { AnimatedDownload } from "@/components/ui/animated-download";
 import { Waves } from "@/components/ui/wave-background";
 import { IconContainer, Radar } from "@/components/ui/radar-effect";
+import { BackgroundPathsLayer } from "@/components/ui/background-paths";
 import { FeedbackCard } from "@/components/ui/feedback-card";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
@@ -146,6 +147,32 @@ function explainDecisionReason(reason: string) {
   return `${cleaned}.`;
 }
 
+function getDecisionSummary(
+  decision: FinalDecision,
+  kycStatus?: KycDocVerifyResult["kyc_status"],
+  docsComplete?: boolean,
+  selfieMatchScore?: number | null,
+) {
+  const outcomeMap: Record<FinalDecision["decision_status"], string> = {
+    APPROVED: "Your application has been approved based on your profile and document checks.",
+    HOLD: "Your application is almost complete and is currently on hold for a quick manual review.",
+    REJECTED: "Your application could not be approved right now based on current verification and policy checks.",
+  };
+
+  const checks: string[] = [];
+  checks.push(`KYC status: ${kycStatus === "VERIFIED" ? "Verified" : "Needs attention"}`);
+  checks.push(`Document set: ${docsComplete === false ? "Incomplete" : "Complete"}`);
+  if (typeof selfieMatchScore === "number") {
+    checks.push(`Selfie confidence: ${Math.round(selfieMatchScore * 100)}%`);
+  }
+
+  return {
+    headline: outcomeMap[decision.decision_status] || "Your application has been reviewed.",
+    explanation: explainDecisionReason(decision.reason),
+    checks,
+  };
+}
+
 function uniqueUrls(values: string[]): string[] {
   const out: string[] = [];
   for (const value of values) {
@@ -181,6 +208,7 @@ function CallPageInner() {
   const [isOtpVerified, setIsOtpVerified] = useState(!kycToken);
   const [isLanguageConfirmed, setIsLanguageConfirmed] = useState(!kycToken);
   const [isPreCallConsentAccepted, setIsPreCallConsentAccepted] = useState(false);
+  const [isPreCallConsentChecked, setIsPreCallConsentChecked] = useState(false);
   const [otpInput, setOtpInput] = useState("");
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpError, setOtpError] = useState("");
@@ -282,13 +310,11 @@ function CallPageInner() {
   const backendCandidates = uniqueUrls([
     configuredBackend,
     "http://127.0.0.1:8001",
-    "http://127.0.0.1:8000",
   ]);
   const fetchBaseCandidates = uniqueUrls([
     "",
     configuredBackend,
     "http://127.0.0.1:8001",
-    "http://127.0.0.1:8000",
   ]);
   const BACKEND = backendCandidates[0] || "http://127.0.0.1:8001";
   const effectivePhone = verifiedSession?.mobile_number || phone;
@@ -313,6 +339,10 @@ function CallPageInner() {
     for (const baseUrl of fetchBaseCandidates) {
       try {
         const res = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, timeoutMs);
+        // Keep trying if this candidate clearly does not host the endpoint.
+        if (res.status === 404 || res.status === 405 || res.status >= 500) {
+          continue;
+        }
         return { res, baseUrl };
       } catch (err) {
         lastError = err;
@@ -395,6 +425,7 @@ function CallPageInner() {
       setIsOtpVerified(true);
       if (kycToken) setIsLanguageConfirmed(false);
       setIsPreCallConsentAccepted(false);
+      setIsPreCallConsentChecked(false);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unable to verify OTP";
       setOtpError(message);
@@ -451,7 +482,13 @@ function CallPageInner() {
       return { ...prev, language: activeLanguage };
     });
     setIsPreCallConsentAccepted(false);
+    setIsPreCallConsentChecked(false);
     setIsLanguageConfirmed(true);
+  };
+
+  const handleStartAfterConsent = () => {
+    if (!isPreCallConsentChecked) return;
+    setIsPreCallConsentAccepted(true);
   };
 
   // ── 1. Initialize camera + mic ─────────────────────────────
@@ -788,11 +825,13 @@ function CallPageInner() {
         });
         setCustomerSnapshot({ interview: interviewPayload });
 
-        // Block if consent is false
-        const consentGiven = Boolean(customerInput.consent);
+        // Respect explicit AI consent when present; otherwise trust pre-call disclaimer consent.
+        const consentValue = customerInput.consent;
+        const consentGiven = typeof consentValue === "boolean" ? consentValue : isPreCallConsentAccepted;
         if (!consentGiven) {
           setJourneyError("Document verification cannot proceed without consent as required by RBI guidelines.");
-          setPhase("error");
+          setAgentNotice("Please provide consent to continue with document verification.");
+          setPhase("conversation");
           return;
         }
 
@@ -814,7 +853,7 @@ function CallPageInner() {
         setPhase("error");
       }
     },
-    [BACKEND, captureSelfie, stopMediaStream],
+    [BACKEND, captureSelfie, isPreCallConsentAccepted, stopMediaStream],
   );
 
   // ── 4. Send transcript to agent (stable callback — uses ref for history) ──
@@ -1403,6 +1442,7 @@ function CallPageInner() {
   const isOfferStage = isOtpVerified && isLanguageConfirmed && (phase === "offer" || phase === "feedback");
   const isConversationStage = isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing");
   const isPreCallStage = !isOtpVerified || !isLanguageConfirmed;
+  const showJourneyBackground = isOtpVerified && isLanguageConfirmed && ["kyc-upload", "preapproval-review", "loan-docs", "offer"].includes(phase);
 
   return (
    <main className={`relative ${isConversationStage ? "h-screen overflow-x-hidden overflow-y-hidden" : "min-h-screen overflow-x-hidden overflow-y-auto"} flex flex-col ${theme === "dark" ? "bg-slate-950" : "bg-white"}`}>
@@ -1456,8 +1496,8 @@ function CallPageInner() {
             <label className="mt-4 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <input
                 type="checkbox"
-                checked={isPreCallConsentAccepted}
-                onChange={(e) => setIsPreCallConsentAccepted(e.target.checked)}
+                checked={isPreCallConsentChecked}
+                onChange={(e) => setIsPreCallConsentChecked(e.target.checked)}
                 className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
               />
               <span className="text-[10px] leading-relaxed text-slate-700 sm:text-[11px]">
@@ -1466,8 +1506,8 @@ function CallPageInner() {
             </label>
             <button
               type="button"
-              disabled={!isPreCallConsentAccepted}
-              onClick={() => setIsPreCallConsentAccepted(true)}
+              disabled={!isPreCallConsentChecked}
+              onClick={handleStartAfterConsent}
               className="mt-4 w-full rounded-xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] py-2.5 text-xs font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {t.startVideoCallBtn}
@@ -1576,7 +1616,8 @@ function CallPageInner() {
       {/* Main Content */}
       <div className="relative z-10 mx-auto flex h-[calc(100vh-48px)] w-full max-w-[1600px] flex-col gap-3 px-3 py-3 lg:flex-row lg:px-4">
         {/* Left: Video */}
-        <div className={`flex min-h-0 flex-col items-center overflow-y-auto p-3 lg:p-4 ${isConversationStage ? "lg:flex-[0.76]" : "lg:flex-1"} ${(isKycUploadStage || isPreapprovalStage || isLoanDocsStage || isOfferStage) ? "justify-start" : "justify-center"}`}>
+        <div className={`relative flex min-h-0 flex-col items-center overflow-y-auto p-3 lg:p-4 ${isConversationStage ? "lg:flex-[0.76]" : "lg:flex-1"} ${(isKycUploadStage || isPreapprovalStage || isLoanDocsStage || isOfferStage) ? "justify-start" : "justify-center"}`}>
+          {showJourneyBackground && <BackgroundPathsLayer />}
           {!isOtpVerified && (
             <div className="fixed inset-0 z-20 flex items-center justify-center bg-white px-4">
               <svg
@@ -1665,7 +1706,7 @@ function CallPageInner() {
 
           {isOtpVerified && !isLanguageConfirmed && (
             <div className="w-full max-w-2xl mx-auto py-3 sm:py-4">
-              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-gradient-to-b from-white to-[#f8fbff] p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
                 <div className="mb-6 text-center">
                   <h2 className="text-[30px] font-bold tracking-tight text-slate-900 leading-[1.1]">{t.chooseLanguage}</h2>
                   <p className="mt-2 text-sm text-slate-500">
@@ -1785,8 +1826,8 @@ function CallPageInner() {
                   </p>
                 </div>
                 <div className="mb-4 text-center md:text-left">
-                  <h2 className="text-[30px] font-bold tracking-tight text-slate-900 leading-[1.1]">Complete KYC Document Upload</h2>
-                  <p className="mt-1.5 text-sm text-slate-500">Upload Aadhaar and PAN to complete identity verification.</p>
+                  <h2 className="text-[30px] font-extrabold tracking-tight text-[#0B1F4A] leading-[1.08] drop-shadow-[0_1px_0_rgba(255,255,255,0.6)]">Complete KYC Document Upload</h2>
+                  <p className="mt-1.5 text-sm font-medium text-[#475569]">Upload Aadhaar and PAN to complete identity verification.</p>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
@@ -1900,39 +1941,39 @@ function CallPageInner() {
                     >
                       Step 3
                     </p>
-                    <h2 className="text-[32px] font-bold tracking-tight text-slate-900 leading-[1.1] mt-2">Pre-Approved Offer</h2>
-                    <p className="mt-2 text-sm text-slate-500">Review and edit your KYC details, then download the KYC review PDF.</p>
+                    <h2 className="text-[32px] font-extrabold tracking-tight text-[#0B1F4A] leading-[1.08] drop-shadow-[0_1px_0_rgba(255,255,255,0.6)] mt-2">Pre-Approved Offer</h2>
+                    <p className="mt-2 text-sm font-medium text-[#475569]">Review and edit your KYC details, then download the KYC review PDF.</p>
                   </div>
 
-                  <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+                  <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-gradient-to-b from-white to-[#f8fbff] p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">Applicant Name</label>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">Applicant Name</label>
                         <input value={editableKycData.applicant_name} onChange={(e) => setEditableKycData((p) => ({ ...p, applicant_name: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">Aadhaar Number</label>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">Aadhaar Number</label>
                         <input value={editableKycData.aadhaar_number} onChange={(e) => setEditableKycData((p) => ({ ...p, aadhaar_number: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">PAN Number</label>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">PAN Number</label>
                         <input value={editableKycData.pan_number} onChange={(e) => setEditableKycData((p) => ({ ...p, pan_number: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">DOB</label>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">DOB</label>
                           <input value={editableKycData.dob} onChange={(e) => setEditableKycData((p) => ({ ...p, dob: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">Gender</label>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">Gender</label>
                           <input value={editableKycData.gender} onChange={(e) => setEditableKycData((p) => ({ ...p, gender: e.target.value }))} className="w-full px-4 py-3 rounded-xl bg-slate-50/70 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-300 focus:bg-white transition" />
                         </div>
                       </div>
                     </div>
 
                     <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700 mb-2">Pre-Approved Amount</p>
-                      <p className="text-3xl font-bold text-emerald-900">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">Pre-Approved Amount</p>
+                      <p className="text-3xl font-bold text-[#1B2B6B]">INR {Number(preapproval.eligible_amount || 0).toLocaleString("en-IN")}</p>
                     </div>
 
                     <div className="mt-6 grid grid-cols-3 gap-3">
@@ -1968,17 +2009,17 @@ function CallPageInner() {
             <div className="w-full max-w-2xl mx-auto py-6 sm:py-8 flex flex-col gap-6">
               <div className="text-center">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#2563EB]">Step 4</p>
-                <h2 className="text-[32px] font-bold tracking-tight text-slate-900 leading-[1.1] mt-2">Loan Documents</h2>
-                <p className="mt-2 text-sm text-slate-500">Upload loan-type specific documents for {currentLoanLabel}.</p>
+                <h2 className="text-[32px] font-extrabold tracking-tight text-[#0B1F4A] leading-[1.08] drop-shadow-[0_1px_0_rgba(255,255,255,0.6)] mt-2">Loan Documents</h2>
+                <p className="mt-2 text-sm font-medium text-[#475569]">Upload loan-type specific documents for {currentLoanLabel}.</p>
               </div>
 
-              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+              <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-gradient-to-b from-white to-[#f8fbff] p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
                 <div className="space-y-4">
                   {loanDocumentRequirements.map((requirement) => {
                     if (requirement.key === "address_proof") {
                       return (
                         <div key={requirement.key}>
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">{requirement.label}</label>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">{requirement.label}</label>
                           <input
                             type="file"
                             accept="image/*,.pdf"
@@ -1991,7 +2032,7 @@ function CallPageInner() {
                     }
                     return (
                       <div key={requirement.key}>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-2">{requirement.label}</label>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-2">{requirement.label}</label>
                         <input
                           type="file"
                           accept="image/*,.pdf"
@@ -2146,13 +2187,13 @@ function CallPageInner() {
                     >
                       Step 5
                     </p>
-                    <h2 className="text-[32px] font-bold tracking-tight text-slate-900 leading-[1.1] mt-2">Final Loan Decision</h2>
-                    <p className="mt-2 text-sm text-slate-500">Final outcome with key reasoning signals from your verification journey.</p>
+                    <h2 className="text-[32px] font-extrabold tracking-tight text-[#0B1F4A] leading-[1.08] drop-shadow-[0_1px_0_rgba(255,255,255,0.6)] mt-2">Final Loan Decision</h2>
+                    <p className="mt-2 text-sm font-medium text-[#475569]">Final outcome with key reasoning signals from your verification journey.</p>
                   </div>
 
-                  <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
+                  <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-gradient-to-b from-white to-[#f8fbff] p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Decision Status</p>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-1">Decision Status</p>
                       <p className={`text-3xl font-bold ${finalDecision.decision_status === "APPROVED" ? "text-emerald-700" : finalDecision.decision_status === "HOLD" ? "text-amber-700" : "text-rose-700"}`}>
                         {finalDecision.decision_status}
                       </p>
@@ -2160,31 +2201,41 @@ function CallPageInner() {
 
                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 text-sm">
                       <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Final Approved Amount</p>
-                        <p className="text-xl font-bold text-slate-900">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-1">Final Approved Amount</p>
+                        <p className="text-xl font-bold text-[#1B2B6B]">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Interest Rate</p>
-                        <p className="text-xl font-bold text-slate-900">{finalDecision.interest_rate}%</p>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-1">Interest Rate</p>
+                        <p className="text-xl font-bold text-[#1B2B6B]">{finalDecision.interest_rate}%</p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:col-span-2 lg:col-span-1 xl:col-span-2">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Tenure Options</p>
-                        <p className="text-lg font-semibold text-slate-900">{(finalDecision.tenure_options || []).join(", ") || "N/A"} months</p>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-1">Tenure Options</p>
+                        <p className="text-lg font-semibold text-[#1B2B6B]">{(finalDecision.tenure_options || []).join(", ") || "N/A"} months</p>
                       </div>
                     </div>
 
                     <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700 mb-1">Decision Reasoning</p>
-                      <p className="text-lg font-bold text-indigo-950">{explainDecisionReason(finalDecision.reason)}</p>
-                      <div className="mt-3 space-y-1.5 text-sm text-indigo-900/90">
-                        <p>Raw engine reason: {finalDecision.reason || "Not provided"}</p>
-                        <p>Risk flag: {finalDecision.risk_flag || "Not provided"}</p>
-                        <p>KYC verification: {kycVerifyResult?.kyc_status || "Not available"}</p>
-                        <p>Document completeness: {addressCheck?.documents_complete === false ? "Incomplete" : "Complete"}</p>
-                        {addressCheck?.selfie_match_score != null && (
-                          <p>Selfie match confidence: {Math.round((addressCheck.selfie_match_score || 0) * 100)}%</p>
-                        )}
-                      </div>
+                      {(() => {
+                        const summary = getDecisionSummary(
+                          finalDecision,
+                          kycVerifyResult?.kyc_status,
+                          addressCheck?.documents_complete,
+                          addressCheck?.selfie_match_score,
+                        );
+                        return (
+                          <>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-[#1B2B6B] mb-1">Decision Reasoning</p>
+                            <p className="text-lg font-bold text-[#1B2B6B]">{summary.headline}</p>
+                            <p className="mt-2 text-sm text-slate-700">{summary.explanation}</p>
+                            <div className="mt-3 space-y-1.5 text-sm text-slate-700">
+                              <p>Risk review tag: {finalDecision.risk_flag || "Not provided"}</p>
+                              {summary.checks.map((line) => (
+                                <p key={line}>{line}</p>
+                              ))}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     <div className="mt-6 flex flex-col sm:flex-row gap-2 justify-center">

@@ -539,12 +539,32 @@ async def request_video_kyc_link(req: VideoKycRequestCreate):
         "otp_verified": False,
     }
 
-    return {
+    # Local/dev convenience: surface OTP + link when email delivery is delayed.
+    dev_expose = (os.environ.get("DEV_EXPOSE_KYC_OTP") or "true").strip().lower() in {"1", "true", "yes", "on"}
+    if dev_expose:
+        print()
+        print("=" * 64)
+        print("[VIDEO KYC DEV PREVIEW]")
+        print(f"Recipient: {req.email}")
+        print(f"Link: {kyc_link}")
+        print(f"OTP: {otp}")
+        print("=" * 64)
+        print()
+
+    response = {
         "status": "success",
         "message": "Video KYC link sent to customer email",
         "link_valid_for_hours": 24,
         "otp_valid_for_minutes": 10,
     }
+    if dev_expose:
+        response["dev_preview"] = {
+            "recipient": req.email,
+            "kyc_link": kyc_link,
+            "otp": otp,
+            "note": "DEV mode preview enabled via DEV_EXPOSE_KYC_OTP",
+        }
+    return response
 
 
 @app.post("/api/video-kyc/verify-otp")

@@ -142,13 +142,11 @@ function LandingPageContent() {
   const backendCandidates = uniqueUrls([
     BACKEND,
     "http://127.0.0.1:8001",
-    "http://127.0.0.1:8000",
   ]);
   const fetchBaseCandidates = uniqueUrls([
     "",
     BACKEND,
     "http://127.0.0.1:8001",
-    "http://127.0.0.1:8000",
   ]);
   const [activeBackendUrl, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");
 
@@ -372,6 +370,10 @@ function LandingPageContent() {
     for (const baseUrl of fetchBaseCandidates) {
       try {
         const res = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, timeoutMs);
+        // Keep trying if this candidate clearly does not host the endpoint.
+        if (res.status === 404 || res.status === 405 || res.status >= 500) {
+          continue;
+        }
         setActiveBackendUrl(baseUrl || "same-origin");
         return { res, baseUrl };
       } catch (err) {
