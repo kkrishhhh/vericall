@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } f
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { Moon, Sun } from "lucide-react";
 import TranscriptPanel from "../../components/TranscriptPanel";
 import OfferCard from "@/components/OfferCard";
 import { LumaSpin } from "@/components/ui/luma-spin";
@@ -141,6 +142,7 @@ function CallPageInner() {
   const [activeLanguage, setActiveLanguage] = useState<Language>(
     (["en", "hi", "mr"].includes(initialLang) ? initialLang : "en") as Language
   );
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const t = translations[activeLanguage] || translations.en;
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -296,6 +298,25 @@ function CallPageInner() {
     { key: "address_proof", label: "Address proof or utility bill", required: true },
   ];
   const loanDocumentRequirements = documentRequirements.filter((doc) => !["aadhaar", "pan", "selfie"].includes(doc.key));
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("vantage-theme");
+    if (savedTheme === "dark") {
+      setTheme("dark");
+      document.documentElement.classList.add("dark");
+    } else {
+      setTheme("light");
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("vantage-theme", "light");
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.classList.toggle("dark", next === "dark");
+    localStorage.setItem("vantage-theme", next);
+  };
 
   const fileToDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -1227,7 +1248,7 @@ function CallPageInner() {
   const isConversationStage = isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing");
 
   return (
-   <main className="relative h-screen bg-white overflow-x-hidden overflow-y-hidden flex flex-col">
+  <main className={`relative h-screen overflow-x-hidden overflow-y-hidden flex flex-col ${theme === "dark" ? "bg-slate-950" : "bg-white"}`}>
       <div className="orb orb-1" />
       <div className="orb orb-2" />
 
@@ -1262,14 +1283,14 @@ function CallPageInner() {
       )}
 
       {/* Top Bar */}
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+      <header className={`sticky top-0 z-40 border-b backdrop-blur-md ${theme === "dark" ? "border-slate-800 bg-slate-950/90" : "border-slate-200/80 bg-white/90"}`}>
         <nav className="mx-auto flex h-12 w-full max-w-7xl items-center justify-between px-4 sm:px-5">
           <div className="flex items-center gap-2.5">
             <Image src="/pfl-logo.png" alt="Poonawalla Fincorp" width={150} height={44} className="h-7 w-auto object-contain" priority />
-            <div className="h-6 w-px shrink-0 bg-slate-200" />
+            <div className={`h-6 w-px shrink-0 ${theme === "dark" ? "bg-slate-700" : "bg-slate-200"}`} />
             <div className="leading-tight">
-              <span className="block text-[15px] font-bold tracking-wide text-slate-900">VANTAGE</span>
-              <span className="block text-[8px] font-medium text-slate-500">by Poonawalla Fincorp</span>
+              <span className={`block text-[15px] font-bold tracking-wide ${theme === "dark" ? "text-slate-100" : "text-slate-900"}`}>VANTAGE</span>
+              <span className={`block text-[8px] font-medium ${theme === "dark" ? "text-slate-400" : "text-slate-500"}`}>by Poonawalla Fincorp</span>
             </div>
           </div>
 
@@ -1283,6 +1304,24 @@ function CallPageInner() {
           </div>
 
           <div className="flex items-center gap-2">
+          {isOtpVerified && isLanguageConfirmed && (
+            <>
+              <Link
+                href="/"
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition ${theme === "dark" ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-200 text-slate-700 hover:bg-slate-100"}`}
+              >
+                Go Home
+              </Link>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${theme === "dark" ? "border-slate-700 text-slate-100 hover:bg-slate-800" : "border-slate-200 text-slate-800 hover:bg-slate-100"}`}
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+              </button>
+            </>
+          )}
           {phase === "conversation" && agentNotice && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-100 border border-amber-200 max-w-[280px]">
               <span className="text-xs text-amber-700 font-medium leading-tight">
