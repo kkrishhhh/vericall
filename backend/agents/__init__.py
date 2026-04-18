@@ -1,4 +1,4 @@
-"""VeriCall Multi-Agent Orchestration Layer.
+"""Vantage AI Multi-Agent Orchestration Layer.
 
 This package implements a production-grade agentic loan origination system
 compliant with RBI KYC Master Direction 2016 and V-CIP requirements.

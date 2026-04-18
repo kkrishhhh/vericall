@@ -1,4 +1,4 @@
-"""VeriCall AI Agent — Groq LLM conversation engine (Fixed Loop Issue)."""
+"""Vantage AI Agent — Groq LLM conversation engine (Fixed Loop Issue)."""
 
 import os
 import json
@@ -11,9 +11,15 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 _LANGUAGE_INSTRUCTIONS = {
-    "en": "Always respond in English.",
-    "hi": "Always respond in Hindi (हिंदी). Use Devanagari script for Hindi.",
-    "mr": "Always respond in Marathi (मराठी). Use Devanagari script for Marathi.",
+    "en": "Always respond in English only. Do not mix Hindi or Marathi words in English mode.",
+    "hi": "Always respond in Hindi (हिंदी) only. Use Devanagari script for Hindi and do not mix English unless it is a proper noun.",
+    "mr": "Always respond in Marathi (मराठी) only. Use Devanagari script for Marathi and do not mix English unless it is a proper noun.",
+}
+
+_CONSENT_QUESTIONS = {
+    "en": "Do you provide explicit consent for this video session to be recorded and securely stored? Please answer Yes or No.",
+    "hi": "क्या आप इस वीडियो सत्र को रिकॉर्ड करके सुरक्षित रूप से संग्रहीत करने के लिए स्पष्ट सहमति देते हैं? कृपया हाँ या नहीं में उत्तर दें।",
+    "mr": "आपण या व्हिडिओ सत्राचे रेकॉर्डिंग करून सुरक्षितरीत्या साठवण्यासाठी स्पष्ट संमती देता का? कृपया होय किंवा नाही असे उत्तर द्या.",
 }
 
 _CLOSING_MESSAGES = {
@@ -37,22 +43,25 @@ def _build_system_prompt(language: str = "en") -> str:
     Crystal clear system prompt that prevents loops by explicitly tracking state.
     """
     lang_instruction = _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
-    return f"""You are VeriCall, a professional loan agent. Follow this EXACT sequence, asking each question ONLY ONCE:
+    consent_question = _CONSENT_QUESTIONS.get(language, _CONSENT_QUESTIONS["en"])
+    return f"""You are Vantage AI, a professional loan agent. Follow this EXACT sequence, asking each question ONLY ONCE:
 
 QUESTION SEQUENCE (never ask a question twice):
 Q1: Ask for full name (if not provided)
-Q2: Ask for employment type ONLY (salaried/self-employed/professional) - if they say "employed", classify as "salaried"
+Q2: Ask naturally about the customer's occupation/work type. Do NOT show slash-separated options in the spoken reply. If they say "employed", classify as "salaried".
 Q3: Ask for monthly income in INR - extract ONLY the number (e.g., "1 lakh" = 100000, "50k" = 50000)
-Q4: Ask for loan type ONLY (personal/home/car/business/loan-against-property/other)
+Q4: Ask naturally which kind of loan they need. Do NOT show slash-separated options in the spoken reply.
 Q5: Ask for loan amount in INR - extract ONLY the number
 Q6: Ask for age - extract ONLY the number
-Q7: Ask for video consent - EXACT question: "Do you provide explicit consent for this video session to be recorded? Say Yes or No."
+Q7: Ask for video consent using this exact sentence in the selected language: "{consent_question}"
 
 CRITICAL RULES:
 - After Q6 (age), you MUST ask Q7 (consent). Do not skip or repeat previous questions.
 - NEVER ask the same question twice. Once you have answered a field, NEVER ask it again.
 - Track in your mind: which of the 7 questions have I asked?
 - If user gives unclear answers (e.g., "employed" for employment), interpret generously and move forward.
+- Keep tone natural and conversational. Avoid robotic labels like "employment type" unless user asks for clarification.
+- Never include bracketed or slash-joined option lists in customer-facing text (e.g., "a/b/c" or "(x/y/z)").
 - When user answers Q7 (consent), output ONLY the JSON below with no other text:
 
 {{"done": true, "name": "STRING", "employment_type": "salaried|self-employed|professional", "monthly_income": NUMBER, "loan_type": "STRING", "requested_loan_amount": NUMBER, "declared_age": NUMBER, "consent": true|false, "interview_notes": ""}}
@@ -63,12 +72,12 @@ EXAMPLES:
 - User says "employed" for employment → employment_type: "salaried"
 - User says "personal" for loan → loan_type: "personal"
 
-Remember: You are professional but friendly. Keep responses concise (1-2 sentences). For non-English modes, never switch back to English. {lang_instruction}
+Remember: You are professional but friendly. Keep responses concise (1-2 sentences). Never mix languages in one sentence. {lang_instruction}
 """
 
 
-# Use fast 8B instant model 
-MODEL = "llama-3.1-8b-instant"
+# Prefer higher-consistency model for multilingual conversational quality.
+MODEL = "llama-3.3-70b-versatile"
 
 
 def run_agent(transcript: str, conversation_history: list[dict], language: str = "en") -> dict:
@@ -95,7 +104,7 @@ def run_agent(transcript: str, conversation_history: list[dict], language: str =
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            temperature=0.7,
+            temperature=0.3,
             max_tokens=320,
         )
     except Exception as e:

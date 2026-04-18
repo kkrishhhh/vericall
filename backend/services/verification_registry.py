@@ -322,7 +322,7 @@ class GSTVerifier:
                 response = await client.get(
                     f"https://api.gst.gov.in/commonapi/v1.1/search",
                     params={"action": "TP", "gstin": compact},
-                    headers={"User-Agent": "vericall-kyc/1.0"},
+                    headers={"User-Agent": "vantage-ai-kyc/1.0"},
                 )
 
                 if response.status_code == 200:

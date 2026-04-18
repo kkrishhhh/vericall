@@ -153,6 +153,7 @@ function CallPageInner() {
   const [phase, setPhase] = useState<CallPhase>("connecting");
   const [isOtpVerified, setIsOtpVerified] = useState(!kycToken);
   const [isLanguageConfirmed, setIsLanguageConfirmed] = useState(!kycToken);
+  const [isPreCallConsentAccepted, setIsPreCallConsentAccepted] = useState(false);
   const [otpInput, setOtpInput] = useState("");
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpError, setOtpError] = useState("");
@@ -361,6 +362,7 @@ function CallPageInner() {
       }
       setIsOtpVerified(true);
       if (kycToken) setIsLanguageConfirmed(false);
+      setIsPreCallConsentAccepted(false);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unable to verify OTP";
       setOtpError(message);
@@ -411,12 +413,13 @@ function CallPageInner() {
       if (!prev) return prev;
       return { ...prev, language: activeLanguage };
     });
+    setIsPreCallConsentAccepted(false);
     setIsLanguageConfirmed(true);
   };
 
   // ── 1. Initialize camera + mic ─────────────────────────────
   useEffect(() => {
-    if (!isOtpVerified || !isLanguageConfirmed) return;
+    if (!isOtpVerified || !isLanguageConfirmed || !isPreCallConsentAccepted) return;
     let cancelled = false;
     let stream: MediaStream | null = null;
 
@@ -508,7 +511,7 @@ function CallPageInner() {
       stream?.getTracks().forEach((t) => t.stop());
       stopMediaStream();
     };
-  }, [isOtpVerified, isLanguageConfirmed, stopMediaStream]);
+  }, [isOtpVerified, isLanguageConfirmed, isPreCallConsentAccepted, stopMediaStream]);
 
   // ── 1b. Bind stream to <video> (element only exists after phase → conversation) ──
   useLayoutEffect(() => {
@@ -1145,7 +1148,7 @@ function CallPageInner() {
       setAddressCheck(verifyData);
       try {
         sessionStorage.setItem(
-          "vericall_last_geo_check",
+          "vantage_last_geo_check",
           JSON.stringify({
             latitude: locationData?.latitude ?? null,
             longitude: locationData?.longitude ?? null,
@@ -1223,7 +1226,7 @@ function CallPageInner() {
             }),
           });
           sessionStorage.setItem(
-            "vericall_last_session",
+            "vantage_last_session",
             JSON.stringify({
               session_id: sessionIdRef.current,
               campaign_id: campaignId || undefined,
@@ -1294,6 +1297,37 @@ function CallPageInner() {
               isAnimating={isDownloadAnimating}
               onAnimationComplete={handleDownloadAnimationComplete}
             />
+          </div>
+        </div>
+      )}
+
+      {isOtpVerified && isLanguageConfirmed && !isPreCallConsentAccepted && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-950/60 px-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] sm:p-6">
+            <h3 className="text-sm font-semibold text-slate-900">{t.preCallDisclaimerTitle}</h3>
+            <div className="mt-3 space-y-2 text-[10px] leading-relaxed text-slate-600 sm:text-[11px]">
+              <p>{t.preCallDisclaimerBody}</p>
+              <p>{t.preCallDisclaimerBody2}</p>
+            </div>
+            <label className="mt-4 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={isPreCallConsentAccepted}
+                onChange={(e) => setIsPreCallConsentAccepted(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-[10px] leading-relaxed text-slate-700 sm:text-[11px]">
+                {t.preCallConsentLabel}
+              </span>
+            </label>
+            <button
+              type="button"
+              disabled={!isPreCallConsentAccepted}
+              onClick={() => setIsPreCallConsentAccepted(true)}
+              className="mt-4 w-full rounded-xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] py-2.5 text-xs font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {t.startVideoCallBtn}
+            </button>
           </div>
         </div>
       )}
@@ -1445,6 +1479,13 @@ function CallPageInner() {
                   {otpVerifying ? "Verifying…" : "Verify OTP"}
                 </button>
 
+                <Link
+                  href="/"
+                  className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white py-3 text-center text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Back to Home
+                </Link>
+
                 <div className="mt-5 flex items-center justify-center gap-4 border-t border-slate-100 pt-4">
                   <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" /> RBI V-CIP
@@ -1509,56 +1550,32 @@ function CallPageInner() {
 
           {isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing") && (
             <div className="w-full max-w-2xl">
-              <div className="relative rounded-2xl overflow-hidden glow-primary">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full aspect-video bg-black/50 object-cover"
-                />
-                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
-                  <div className="glass rounded-lg px-3 py-1.5">
-                    <span className="text-xs text-slate-200 font-medium">You</span>
-                  </div>
-                  {phase === "analyzing" && (
-                    <div className="glass rounded-lg px-4 py-2 flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      <span className="text-xs text-cyan-400">{processingStep}</span>
+              <div className="rounded-[28px] border border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-blue-50/70 p-2 shadow-[0_20px_70px_rgba(37,99,235,0.16)]">
+                <div className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white glow-primary">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full aspect-video bg-black/50 object-cover"
+                  />
+                  <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
+                    <div className="glass rounded-lg px-3 py-1.5">
+                      <span className="text-xs text-slate-200 font-medium">You</span>
                     </div>
-                  )}
+                    {phase === "analyzing" && (
+                      <div className="glass rounded-lg px-4 py-2 flex items-center gap-2">
+                        <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span className="text-xs text-cyan-400">{processingStep}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Manual input fallback */}
-              {phase === "conversation" && (
-                <div className="mt-4 space-y-2">
-                  
-                  {/* 👇 ADD THIS MESSAGE */}
-                  <p className="text-xs text-slate-400 text-center">
-                    VeriCall is AI and may make mistakes — if something looks incorrect, feel free to type it out.
-                  </p>
-
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={manualInput}
-                      onChange={(e) => setManualInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
-                      placeholder="Type a message (or speak)..."
-                      className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition text-sm"
-                    />
-                    <button onClick={handleManualSend} className="btn-primary px-4 py-3 !rounded-xl">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -2057,7 +2074,7 @@ function CallPageInner() {
         </div>
 
         {!isKycUploadStage && !isPreapprovalStage && !isLoanDocsStage && !isOfferStage && (
-        <div className={`w-full h-[360px] lg:h-full min-h-0 overflow-hidden border-t border-slate-200/70 bg-white/75 backdrop-blur-xl lg:border-t-0 lg:border-l ${isConversationStage ? "lg:flex-[0.24] lg:w-auto" : "lg:w-[360px]"}`}>
+        <div className={`w-full h-[360px] lg:h-full min-h-0 overflow-hidden border-t border-slate-200/70 bg-white/75 backdrop-blur-xl lg:border-t-0 ${isConversationStage ? "lg:flex-[0.24] lg:w-auto" : "lg:w-[360px]"}`}>
           {isOtpVerified && !isLanguageConfirmed && (
             <div className="flex h-full items-center justify-center px-6 text-center">
               <div>
@@ -2079,7 +2096,6 @@ function CallPageInner() {
               onManualSend={handleManualSend}
               onQuickReply={handleQuickReply}
               isMicMuted={isMicMuted}
-              stageLabel={phase === "conversation" ? "Employment" : "Verification"}
             />
           )}
 

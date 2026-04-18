@@ -1,4 +1,4 @@
-# VeriCall — Complete Project Deep Dive
+# Vantage AI — Complete Project Deep Dive
 
 > **What it is**: A fully autonomous, multilingual AI loan origination and Video KYC platform built for the **Poonawalla Fincorp TenzorX Hackathon**. It replaces the traditional paperwork-heavy loan onboarding process with a real-time AI video conversation that interviews the customer, verifies their identity through computer vision, validates KYC documents using multimodal LLM vision, and delivers a live loan decision — all in under 5 minutes.
 >
@@ -183,7 +183,7 @@ graph TB
 - Frontend TTS speaks agent responses in the selected language (`en-US`, `hi-IN`, `mr-IN`)
 - STT is muted while TTS speaks (prevents echo feedback loop)
 
-**Pre-approval calculation** ([journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/journey_core.py)):
+**Pre-approval calculation** ([journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/journey_core.py)):
 - Salaried: 10x–15x monthly income
 - Self-employed: 6x–10x monthly income
 - Professional: 8x–12x monthly income
@@ -192,7 +192,7 @@ graph TB
 
 **What happens**: Customer enters Aadhaar (12-digit) and PAN (format: ABCDE1234F), and a selfie is auto-captured from the video feed.
 
-**Validation** ([journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/journey_core.py#L87-L117)):
+**Validation** ([journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/journey_core.py#L87-L117)):
 - Aadhaar: regex `\d{12}` validation
 - PAN: regex `[A-Z]{5}[0-9]{4}[A-Z]` validation
 - Selfie: must be >120 chars (valid base64)
@@ -204,7 +204,7 @@ graph TB
 
 **What happens**: Customer uploads 3 documents (Aadhaar card, PAN card, Address proof). The system uses **Groq Vision (Llama 4 Scout 17B)** to OCR and cross-validate all documents.
 
-**AI Document Matching** ([document_match.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/document_match.py)):
+**AI Document Matching** ([document_match.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/document_match.py)):
 - Sends all 3 images as base64 to Groq Vision in a single multimodal prompt
 - Extracts: name, DOB, gender, blood group, Aadhaar number, PAN number, full address, city
 - Cross-validates:
@@ -223,7 +223,7 @@ graph TB
 
 **What happens**: If documents pass, the decision engine evaluates final approval.
 
-**Decision logic** ([journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/journey_core.py#L120-L160)):
+**Decision logic** ([journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/journey_core.py#L120-L160)):
 - KYC not verified → **REJECTED**
 - Documents pending → **HOLD**
 - All clear:
@@ -266,62 +266,62 @@ graph TB
 
 ## 5. Every Backend Module Explained
 
-### [main.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/main.py) (452 lines)
+### [main.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/main.py) (452 lines)
 The FastAPI entry point. Registers all 23 endpoints, configures CORS (allow all origins for dev), loads env from project root. Includes the `POST /api/agent/orchestrate` endpoint that drives the multi-agent pipeline. Runs on port 8001 with Uvicorn hot-reload.
 
-### [agent.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agent.py) (122 lines)
+### [agent.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agent.py) (122 lines)
 The Groq LLM conversation engine. Builds a system prompt with language-specific instructions (EN/HI/MR). Maintains conversation history. Detects when the agent returns the final JSON (`done: true`). Handles embedded JSON within prose responses. Manages consent flow — blocks application if consent is refused per RBI guidelines.
 
-### [models.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/models.py) (296 lines)
+### [models.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/models.py) (296 lines)
 20+ Pydantic models covering: `AgentRequest/Response`, `FaceAnalysisRequest/Response`, `RiskAssessmentRequest/Response`, `OfferRequest/LoanOffer`, `RoomResponse`, `SessionAuditPayload/Response`, `ExtractRequest/ExtractedProfile`, `SendOTPRequest/VerifyOTPRequest`, `VerifyAddressRequest/Response`, `InterviewProfileRequest/PreapprovalResponse`, `KycVerifyRequest/Response`, `DocumentRequirementsResponse`, `DocumentVerifyRequest/Response`, `DecisionRequest/Response`.
 
-### [vision.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/vision.py) (153 lines)
+### [vision.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/vision.py) (153 lines)
 DeepFace age + emotion analysis. Supports multi-frame median (up to 5 frames for stability). Age correction: `-6` years for <35, `-3` for ≥35 (DeepFace systematic overestimation). Emotion-based liveness detection: passes if dominant emotion ≠ "neutral". Returns: estimated_age, confidence, face_detected, dominant_emotion, liveness_passed.
 
-### [age_verification.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/age_verification.py) (97 lines)
+### [age_verification.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/age_verification.py) (97 lines)
 Compares DeepFace age estimate against customer's claimed age. Tiered scoring:
 - Δ ≤ 5 yrs → 1.0 score (strong match)
 - Δ ≤ 8 yrs → 0.78 (acceptable)
 - Δ ≤ 12 yrs → 0.45 (within tolerance)
 - Δ > 12 yrs → fraud flag `AGE_MISMATCH` (high severity)
 
-### [fraud.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/fraud.py) (157 lines)
+### [fraud.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/fraud.py) (157 lines)
 Multi-signal fraud flag engine. Checks: visual age mismatch, GPS location outside India (bounding box 6°–37°N, 68°–98°E), income-employment inconsistency (student >₹50K, unemployed >₹20K), missing critical data, consent check, age eligibility (21–55 range). Risk banding: HIGH (≥2 high flags), MEDIUM (1 high or ≥2 medium), LOW (else). Eligibility: no high flags + income ≥₹15K.
 
-### [offer.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/offer.py) (263 lines)
+### [offer.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/offer.py) (263 lines)
 Policy-based loan offer generation. Income multipliers by employment type (salaried: 15x, self-employed: 10x, other: 7x). Risk-adjusted rates (HIGH: +3%, MEDIUM: +1%). Bureau score adjustments (≥760: -0.7%, <620: +1.3%). Propensity score adjustments (≥0.72: -0.5%, <0.48: +0.8%). EMI calculated with standard amortization formula. Processing fee: 1% of loan (min ₹1,000). Status: PRE-APPROVED / NEEDS_REVIEW / DECLINED.
 
-### [extraction.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/extraction.py) (81 lines)
+### [extraction.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/extraction.py) (81 lines)
 Second-pass LLM extraction. Takes messy multi-language transcript and normalizes to structured JSON. Handles speech-to-text errors, Hindi-English code-mixing, fillers. Maps "lakh" conversions. Returns extraction_confidence (0–1) and fraud/inconsistency notes.
 
-### [session_log.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/session_log.py) (202 lines)
+### [session_log.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/session_log.py) (202 lines)
 Dual-backend audit persistence. Primary: SQLite with indexed columns (logged_at DESC, risk_band, offer_status). Fallback: JSONL append. Thread-safe with `threading.Lock`. Supports UPSERT (ON CONFLICT DO UPDATE). Optional JSONL mirror via `AUDIT_WRITE_JSONL_COPY` env var.
 
 ### agents/ Directory — Multi-Agent Orchestration Layer
 
 | File | Lines | Purpose |
 |---|---|---|
-| [state.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/state.py) | 268 | Central `AgentState` dataclass (Pydantic v2). Contains: `CustomerProfile`, `KYCStatus`, `DocumentResults`, `RiskAssessment`, `OfferDetails`, `GeoTag`, `AuditEntry`, `AgentError`, `RetryRequest`. Includes `Phase` and `UserAction` enums. `OrchestrateRequest`/`OrchestrateResponse` API schemas. Methods: `log_audit()` (append-only), `log_error()`. |
-| [orchestrator.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/orchestrator.py) | ~350 | The brain. Uses Groq `llama-3.3-70b-versatile` with tool-calling — describes 4 sub-agents as tools and the LLM decides which one to invoke. Contains: `_ORCHESTRATOR_SYSTEM_PROMPT`, `ORCHESTRATOR_TOOLS` (4 function definitions), `_llm_resolve()` (LLM-based routing with 3-retry exponential backoff), `_deterministic_resolve()` (fallback), `_dispatch()`, `_compute_next_phase()` (phase transition logic including retry loop and manual review escalation). |
-| [interview_agent.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/interview_agent.py) | ~240 | **3 tools**: `calculate_preapproval(income, employment_type)` — NBFC income multipliers; `validate_consent(text)` — NLP keyword matching across EN/HI/MR for affirmative consent (V-CIP mandate); `detect_income_inconsistency(income, employment_type, age)` — flags students claiming >₹50K, unemployed >₹20K, age-income mismatches. Runner: `run_interview_agent()` executes all 3 tools sequentially. |
-| [kyc_agent.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/kyc_agent.py) | ~290 | **4 tools**: `verify_aadhaar_format(number)` — 12-digit + first-digit rules; `verhoeff_checksum(number)` — UIDAI Verhoeff algorithm with full D/P tables; `face_match(selfie_b64, aadhaar_photo_b64)` — deterministic hash-based simulation (0.55–0.95 range, threshold ≥0.65); `check_sanctions_list(name)` — fuzzy matches against UNSC/MHA/UAPA mock list using `SequenceMatcher` (threshold 0.85). Runner: `run_kyc_agent()` with overall status determination. |
-| [document_agent.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/document_agent.py) | ~380 | **4 tools + agentic retry loop**: `ocr_document(image_b64, doc_type)` — Groq Vision OCR with type-specific prompts; `cross_validate_fields(doc1, doc2, doc3)` — normalizes name/DOB/gender/address and checks consistency; `geolocate_and_match(lat, lng, doc_city)` — Nominatim reverse geocode for V-CIP geo-tagging; `mask_aadhaar_number(image_b64)` — RBI Aadhaar masking compliance. **Retry loop**: `_handle_cross_validation_failure()` adds `RetryRequest` objects instead of terminating, max 3 retries per document, escalates to `MANUAL_REVIEW` when exhausted. |
-| [decision_agent.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/decision_agent.py) | ~290 | **4 tools**: `bureau_score(income, age)` — CIBIL-like 300–900 score with deterministic hash variance, tracks active loans/delinquencies; `propensity_score(bureau, risk_band, income)` — transparent 0–1 score with factor contributions (income: 22%, bureau: 18%); `generate_offer(eligible_amount, rate, tenure_options)` — reducing-balance EMI formula, 1% processing fee; `query_rbi_policy_rag(decision_reason)` — delegates to PolicyRAGAgent for regulatory citation. Gate checks: blocks if KYC not VERIFIED or documents not VERIFIED. |
-| [rag_agent.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/rag_agent.py) | ~190 | **PolicyRAGAgent** — singleton pattern. On first call: loads 906-line RBI KYC Master Direction 2016 text → chunks at ~500 words with 50-word overlap → encodes via `all-MiniLM-L6-v2` (384-dim vectors) → stores in ChromaDB in-memory collection. `query(text, top_k)` performs semantic search and returns citations with relevance scores. Tested: **96.5% relevance** on Aadhaar verification queries. |
-| [__init__.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/agents/__init__.py) | 30 | Package init. Exposes: `AgentState`, `OrchestrateRequest`, `OrchestrateResponse`, `AuditEntry`, `OrchestratorAgent`. |
+| [state.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/state.py) | 268 | Central `AgentState` dataclass (Pydantic v2). Contains: `CustomerProfile`, `KYCStatus`, `DocumentResults`, `RiskAssessment`, `OfferDetails`, `GeoTag`, `AuditEntry`, `AgentError`, `RetryRequest`. Includes `Phase` and `UserAction` enums. `OrchestrateRequest`/`OrchestrateResponse` API schemas. Methods: `log_audit()` (append-only), `log_error()`. |
+| [orchestrator.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/orchestrator.py) | ~350 | The brain. Uses Groq `llama-3.3-70b-versatile` with tool-calling — describes 4 sub-agents as tools and the LLM decides which one to invoke. Contains: `_ORCHESTRATOR_SYSTEM_PROMPT`, `ORCHESTRATOR_TOOLS` (4 function definitions), `_llm_resolve()` (LLM-based routing with 3-retry exponential backoff), `_deterministic_resolve()` (fallback), `_dispatch()`, `_compute_next_phase()` (phase transition logic including retry loop and manual review escalation). |
+| [interview_agent.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/interview_agent.py) | ~240 | **3 tools**: `calculate_preapproval(income, employment_type)` — NBFC income multipliers; `validate_consent(text)` — NLP keyword matching across EN/HI/MR for affirmative consent (V-CIP mandate); `detect_income_inconsistency(income, employment_type, age)` — flags students claiming >₹50K, unemployed >₹20K, age-income mismatches. Runner: `run_interview_agent()` executes all 3 tools sequentially. |
+| [kyc_agent.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/kyc_agent.py) | ~290 | **4 tools**: `verify_aadhaar_format(number)` — 12-digit + first-digit rules; `verhoeff_checksum(number)` — UIDAI Verhoeff algorithm with full D/P tables; `face_match(selfie_b64, aadhaar_photo_b64)` — deterministic hash-based simulation (0.55–0.95 range, threshold ≥0.65); `check_sanctions_list(name)` — fuzzy matches against UNSC/MHA/UAPA mock list using `SequenceMatcher` (threshold 0.85). Runner: `run_kyc_agent()` with overall status determination. |
+| [document_agent.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/document_agent.py) | ~380 | **4 tools + agentic retry loop**: `ocr_document(image_b64, doc_type)` — Groq Vision OCR with type-specific prompts; `cross_validate_fields(doc1, doc2, doc3)` — normalizes name/DOB/gender/address and checks consistency; `geolocate_and_match(lat, lng, doc_city)` — Nominatim reverse geocode for V-CIP geo-tagging; `mask_aadhaar_number(image_b64)` — RBI Aadhaar masking compliance. **Retry loop**: `_handle_cross_validation_failure()` adds `RetryRequest` objects instead of terminating, max 3 retries per document, escalates to `MANUAL_REVIEW` when exhausted. |
+| [decision_agent.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/decision_agent.py) | ~290 | **4 tools**: `bureau_score(income, age)` — CIBIL-like 300–900 score with deterministic hash variance, tracks active loans/delinquencies; `propensity_score(bureau, risk_band, income)` — transparent 0–1 score with factor contributions (income: 22%, bureau: 18%); `generate_offer(eligible_amount, rate, tenure_options)` — reducing-balance EMI formula, 1% processing fee; `query_rbi_policy_rag(decision_reason)` — delegates to PolicyRAGAgent for regulatory citation. Gate checks: blocks if KYC not VERIFIED or documents not VERIFIED. |
+| [rag_agent.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/rag_agent.py) | ~190 | **PolicyRAGAgent** — singleton pattern. On first call: loads 906-line RBI KYC Master Direction 2016 text → chunks at ~500 words with 50-word overlap → encodes via `all-MiniLM-L6-v2` (384-dim vectors) → stores in ChromaDB in-memory collection. `query(text, top_k)` performs semantic search and returns citations with relevance scores. Tested: **96.5% relevance** on Aadhaar verification queries. |
+| [__init__.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/agents/__init__.py) | 30 | Package init. Exposes: `AgentState`, `OrchestrateRequest`, `OrchestrateResponse`, `AuditEntry`, `OrchestratorAgent`. |
 
 ### services/ Directory
 
 | File | Lines | Purpose |
 |---|---|---|
-| [journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/journey_core.py) | 160 | Pre-approval calculator, KYC verifier (Aadhaar/PAN regex + selfie hash-based face match), final decision evaluator |
-| [document_match.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/document_match.py) | 372 | Groq Vision multimodal OCR. Extracts fields from 3 documents, cross-validates name/DOB/gender/address. Verhoeff Aadhaar checksum. OpenCV face crop from Aadhaar. Nominatim reverse geocoding for city match. |
-| [risk_engine.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/risk_engine.py) | 71 | Numeric risk score 0–100 (base: LOW=22, MEDIUM=48, HIGH=72 + flag penalties). Human-readable decision reasons for UI/audit. |
-| [bureau.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/bureau.py) | 60 | Deterministic mock bureau. Score 300–900 based on income + age + SHA-256 hash variance. Tracks active loans, inquiries, delinquencies, utilization. |
-| [propensity.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/propensity.py) | 76 | Transparent propensity scoring (0–1). Factors: income (22%), bureau (18%), age stability (6%), risk band, risk score, consent. Returns factor-level contributions for explainability. |
-| [document_builder.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/document_builder.py) | 117 | Builds 3-document pack from session audit: Loan Application Form, KYC Summary Sheet, Offer Decision Note. |
-| [document_templates.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/document_templates.py) | 150 | Print-friendly HTML renderer. A4 layout with CSS grid, applicant photo, signature blocks. |
-| [document_pdf.py](file:///c:/Users/Krishna%20thakur/Documents/vericall/backend/services/document_pdf.py) | 118 | ReportLab PDF generator. A4 canvas with embedded Aadhaar photo, auto-pagination, signature lines. |
+| [journey_core.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/journey_core.py) | 160 | Pre-approval calculator, KYC verifier (Aadhaar/PAN regex + selfie hash-based face match), final decision evaluator |
+| [document_match.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/document_match.py) | 372 | Groq Vision multimodal OCR. Extracts fields from 3 documents, cross-validates name/DOB/gender/address. Verhoeff Aadhaar checksum. OpenCV face crop from Aadhaar. Nominatim reverse geocoding for city match. |
+| [risk_engine.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/risk_engine.py) | 71 | Numeric risk score 0–100 (base: LOW=22, MEDIUM=48, HIGH=72 + flag penalties). Human-readable decision reasons for UI/audit. |
+| [bureau.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/bureau.py) | 60 | Deterministic mock bureau. Score 300–900 based on income + age + SHA-256 hash variance. Tracks active loans, inquiries, delinquencies, utilization. |
+| [propensity.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/propensity.py) | 76 | Transparent propensity scoring (0–1). Factors: income (22%), bureau (18%), age stability (6%), risk band, risk score, consent. Returns factor-level contributions for explainability. |
+| [document_builder.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/document_builder.py) | 117 | Builds 3-document pack from session audit: Loan Application Form, KYC Summary Sheet, Offer Decision Note. |
+| [document_templates.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/document_templates.py) | 150 | Print-friendly HTML renderer. A4 layout with CSS grid, applicant photo, signature blocks. |
+| [document_pdf.py](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/backend/services/document_pdf.py) | 118 | ReportLab PDF generator. A4 canvas with embedded Aadhaar photo, auto-pagination, signature lines. |
 
 ---
 
@@ -331,25 +331,25 @@ Dual-backend audit persistence. Primary: SQLite with indexed columns (logged_at 
 
 | Route | File | Lines | Purpose |
 |---|---|---|---|
-| `/` | [page.tsx](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/app/page.tsx) | 384 | Landing page. 3-step flow: Language selection → Aadhaar/PAN + Phone input → OTP verification → Room creation → redirect to `/call` |
-| `/call` | [call/page.tsx](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/app/call/page.tsx) | 1174 | The main interaction room. 7 CallPhase states: connecting → conversation → analyzing → kyc → upload-docs → offer → error. Manages video, STT, agent polling, manual text input, KYC form, document upload, final decision display, PDF download. Session interruption handler (5-second timeout). |
-| `/dashboard` | [dashboard/page.tsx](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/app/dashboard/page.tsx) | 151 | Audit log viewer. Shows browser's last session (sessionStorage) + server sessions table with risk/propensity/bureau/offer columns. |
+| `/` | [page.tsx](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/app/page.tsx) | 384 | Landing page. 3-step flow: Language selection → Aadhaar/PAN + Phone input → OTP verification → Room creation → redirect to `/call` |
+| `/call` | [call/page.tsx](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/app/call/page.tsx) | 1174 | The main interaction room. 7 CallPhase states: connecting → conversation → analyzing → kyc → upload-docs → offer → error. Manages video, STT, agent polling, manual text input, KYC form, document upload, final decision display, PDF download. Session interruption handler (5-second timeout). |
+| `/dashboard` | [dashboard/page.tsx](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/app/dashboard/page.tsx) | 151 | Audit log viewer. Shows browser's last session (sessionStorage) + server sessions table with risk/propensity/bureau/offer columns. |
 
 ### Components
 
 | Component | File | Lines | Purpose |
 |---|---|---|---|
-| **OfferCard** | [OfferCard.tsx](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/components/OfferCard.tsx) | 381 | Animated loan offer presentation. Status-colored headers (green/amber/red). Shows: extracted profile, risk band + score, fraud flags, loan details (amount/tenure/rate/EMI), 7-point verification summary (face age, liveness, location, income, employment, consent, fraud), animated confidence progress bar. Uses Framer Motion springs. |
-| **TranscriptPanel** | [TranscriptPanel.tsx](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/components/TranscriptPanel.tsx) | 110 | Live conversation transcript. Auto-scrolls. Animated message bubbles (user=cyan, agent=indigo). Shows interim speech text with "speaking..." indicator. LIVE badge with pulsing red dot. |
+| **OfferCard** | [OfferCard.tsx](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/components/OfferCard.tsx) | 381 | Animated loan offer presentation. Status-colored headers (green/amber/red). Shows: extracted profile, risk band + score, fraud flags, loan details (amount/tenure/rate/EMI), 7-point verification summary (face age, liveness, location, income, employment, consent, fraud), animated confidence progress bar. Uses Framer Motion springs. |
+| **TranscriptPanel** | [TranscriptPanel.tsx](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/components/TranscriptPanel.tsx) | 110 | Live conversation transcript. Auto-scrolls. Animated message bubbles (user=cyan, agent=indigo). Shows interim speech text with "speaking..." indicator. LIVE badge with pulsing red dot. |
 
 ### Library Files
 
 | File | Lines | Purpose |
 |---|---|---|
-| [sttService.ts](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/lib/sttService.ts) | 180 | Deepgram WebSocket client. Creates AudioContext, ScriptProcessorNode (4096 buffer), streams mono PCM linear16. Mute support (zeroes PCM buffer). Language-aware URL building (en-IN, hi, mr). Handles: onFinalTranscript, onInterim, onUtteranceEnd, onOpen, onError, onClose, onListeningChange. |
-| [translations.ts](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/lib/translations.ts) | 161 | Full i18n for EN, HI (हिंदी), MR (मराठी). 35+ translation keys covering landing page, call page, and application flow. Native Devanagari script throughout. |
+| [sttService.ts](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/lib/sttService.ts) | 180 | Deepgram WebSocket client. Creates AudioContext, ScriptProcessorNode (4096 buffer), streams mono PCM linear16. Mute support (zeroes PCM buffer). Language-aware URL building (en-IN, hi, mr). Handles: onFinalTranscript, onInterim, onUtteranceEnd, onOpen, onError, onClose, onListeningChange. |
+| [translations.ts](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/lib/translations.ts) | 161 | Full i18n for EN, HI (हिंदी), MR (मराठी). 35+ translation keys covering landing page, call page, and application flow. Native Devanagari script throughout. |
 
-### Design System ([globals.css](file:///c:/Users/Krishna%20thakur/Documents/vericall/frontend/src/app/globals.css) — 215 lines)
+### Design System ([globals.css](file:///c:/Users/Krishna%20thakur/Documents/Vantage AI/frontend/src/app/globals.css) — 215 lines)
 - **Color palette**: Indigo primary (#6366f1), Cyan accent (#06b6d4), dark bg (#0a0a1a)
 - **Glass morphism**: `backdrop-filter: blur(20px)` with semi-transparent borders
 - **Animated gradient background**: 4-stop diagonal gradient, 15s infinite animation
@@ -494,7 +494,7 @@ Call page opens:
 ## 10. Directory Layout (Complete)
 
 ```
-vericall/
+Vantage AI/
 ├── .env                           # API keys (GROQ, DEEPGRAM, DAILY)
 ├── .env.example                   # Template with all required keys
 ├── .gitignore                     # Ignores: data/, .env, __pycache__, node_modules, .next

@@ -242,7 +242,7 @@ async def geolocate_and_match(
                     "zoom": 10,
                     "addressdetails": 1,
                 },
-                headers={"User-Agent": "vericall-kyc/1.0"},
+                headers={"User-Agent": "vantage-ai-kyc/1.0"},
             )
         if res.is_success:
             address = (res.json() or {}).get("address") or {}

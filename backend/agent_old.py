@@ -1,4 +1,4 @@
-"""VeriCall AI Agent — Groq LLM conversation engine."""
+"""Vantage AI Agent — Groq LLM conversation engine."""
 
 import os
 import json
@@ -18,7 +18,7 @@ _LANGUAGE_INSTRUCTIONS = {
 
 def _build_system_prompt(language: str = "en") -> str:
     lang_instruction = _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
-    return f"""You are VeriCall, an AI loan origination agent for Poonawalla Fincorp.
+    return f"""You are Vantage AI, an AI loan origination agent for Poonawalla Fincorp.
 Your job is to collect the following information from the customer in a friendly, conversational way:
 1. Full name
 2. Employment type (salaried/self-employed/professional)

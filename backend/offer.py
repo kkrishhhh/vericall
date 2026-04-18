@@ -1,4 +1,4 @@
-"""VeriCall Offer Engine — policy-based loan offer generation."""
+"""Vantage AI Offer Engine — policy-based loan offer generation."""
 
 import math
 from models import CustomerData, FraudFlag

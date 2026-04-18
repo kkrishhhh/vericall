@@ -1,4 +1,4 @@
-"""VeriCall — FastAPI Backend Entry Point."""
+"""Vantage AI — FastAPI Backend Entry Point."""
 
 import os
 import time
@@ -74,7 +74,7 @@ from services.analytics import (
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 app = FastAPI(
-    title="VeriCall API",
+    title="Vantage AI API",
     description="Agentic AI Video Call Onboarding System — Backend",
     version="1.0.0",
 )
@@ -92,7 +92,7 @@ app.add_middleware(
 @app.get("/")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "service": "VeriCall API", "version": "1.0.0"}
+    return {"status": "ok", "service": "Vantage AI API", "version": "1.0.0"}
 
 
 # ── 1. Agent Endpoint ────────────────────────────────────────

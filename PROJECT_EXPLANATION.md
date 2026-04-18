@@ -1,8 +1,8 @@
-# VeriCall Project Explanation (Complete, Easy-to-Understand)
+# Vantage AI Project Explanation (Complete, Easy-to-Understand)
 
 ## 1. What this project is
 
-VeriCall is an AI-assisted loan onboarding and verification platform.
+Vantage AI is an AI-assisted loan onboarding and verification platform.
 
 In plain words, it helps a customer:
 1. Start from a phone + OTP flow.
@@ -366,4 +366,4 @@ Frontend:
 
 ## 11. In one sentence
 
-VeriCall is a full-stack, multilingual, AI-enabled digital loan onboarding system that combines live conversation, KYC/document intelligence, policy-aware decisioning, and auditable outputs into one connected journey.
+Vantage AI is a full-stack, multilingual, AI-enabled digital loan onboarding system that combines live conversation, KYC/document intelligence, policy-aware decisioning, and auditable outputs into one connected journey.

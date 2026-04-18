@@ -21,7 +21,6 @@ interface TranscriptPanelProps {
   onQuickReply?: (value: string) => void;
   isMicMuted?: boolean;
   isCameraOff?: boolean;
-  stageLabel?: string;
 }
 
 function MicrophoneGlyph({ animated = false }: { animated?: boolean }) {
@@ -54,7 +53,6 @@ export default function TranscriptPanel({
   onQuickReply,
   isMicMuted = false,
   isCameraOff = false,
-  stageLabel = "Employment",
 }: TranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -67,11 +65,10 @@ export default function TranscriptPanel({
   const statusTone = isWaitingForAI ? "bg-amber-100 text-amber-700 border-amber-200" : isListening ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-indigo-100 text-indigo-700 border-indigo-200";
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/75 backdrop-blur-xl shadow-[0_20px_80px_rgba(15,23,42,0.12)]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] bg-white/80 backdrop-blur-xl shadow-[0_20px_80px_rgba(15,23,42,0.12)] ring-1 ring-slate-100">
       <div className="flex items-center justify-between border-b border-slate-200/70 px-4 py-4 sm:px-5">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#1B2B6B]">{stageLabel}</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Vantage AI</p>
+          <p className="text-sm font-semibold text-slate-900">Vantage AI</p>
           <p className="text-xs text-slate-500">{isListening ? "Listening live" : "Waiting for your answer"}</p>
         </div>
 

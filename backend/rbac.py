@@ -37,7 +37,7 @@ class Role(IntEnum):
 
 # ── JWT Config ───────────────────────────────────────────────────
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "vericall-demo-secret-key-2026")
+JWT_SECRET = os.environ.get("JWT_SECRET", "vantage-demo-secret-key-2026")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 8
 

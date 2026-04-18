@@ -30,7 +30,7 @@ export const translations = {
     rbiCompliant: "RBI Compliant",
     endToEndEncrypted: "End-to-End Encrypted",
     zeroAppFee: "₹0 Application Fee",
-    footerText: "© 2026 VeriCall by TenzorX · Poonawalla Fincorp Hackathon",
+    footerText: "© 2026 Vantage AI by TenzorX · Poonawalla Fincorp Hackathon",
     appDashboard: "Applications dashboard",
     
     // Call Page
@@ -45,6 +45,11 @@ export const translations = {
     preparingOffer: "Preparing personalized loan offer...",
     finalizingOffer: "Finalizing loan application...",
     recordingNotice: "This call is being recorded and analyzed securely.",
+    preCallDisclaimerTitle: "Important Disclaimer",
+    preCallDisclaimerBody: "Before this Video KYC call begins, please review and accept: this session may be recorded, stored, and processed for identity verification, fraud prevention, compliance, audit, and customer safety under applicable regulatory requirements.",
+    preCallDisclaimerBody2: "Recorded data may include your voice, video, documents, and responses shared during this session. Authorized teams and regulated service providers may access this data only for verification and compliance workflows.",
+    preCallConsentLabel: "I provide explicit consent for this video session to be recorded and securely stored.",
+    startVideoCallBtn: "Start Video Call",
     listening: "Listening...",
     saySomething: "Say something to the AI...",
     
@@ -82,7 +87,7 @@ export const translations = {
     rbiCompliant: "RBI अनुपालित",
     endToEndEncrypted: "एंड-टू-एंड एन्क्रिप्टेड",
     zeroAppFee: "₹0 आवेदन शुल्क",
-    footerText: "© 2026 VeriCall by TenzorX · पूनावाला फिनकॉर्प हैकाथॉन",
+    footerText: "© 2026 Vantage AI by TenzorX · पूनावाला फिनकॉर्प हैकाथॉन",
     appDashboard: "एप्लिकेशन डैशबोर्ड",
     
     // Call Page
@@ -97,6 +102,11 @@ export const translations = {
     preparingOffer: "व्यक्तिगत लोन ऑफ़र तैयार किया जा रहा है...",
     finalizingOffer: "लोन आवेदन को अंतिम रूप दिया जा रहा है...",
     recordingNotice: "इस कॉल को सुरक्षित रूप से रिकॉर्ड और विश्लेषण किया जा रहा है।",
+    preCallDisclaimerTitle: "महत्वपूर्ण सूचना",
+    preCallDisclaimerBody: "वीडियो KYC कॉल शुरू होने से पहले कृपया सहमति दें: यह सत्र पहचान सत्यापन, धोखाधड़ी रोकथाम, अनुपालन, ऑडिट और सुरक्षा उद्देश्यों के लिए रिकॉर्ड, संग्रहीत और प्रोसेस किया जा सकता है।",
+    preCallDisclaimerBody2: "रिकॉर्ड किए गए डेटा में आपकी आवाज़, वीडियो, दस्तावेज़ और इस सत्र के दौरान दिए गए उत्तर शामिल हो सकते हैं। अधिकृत टीम और विनियमित सेवा प्रदाता केवल सत्यापन और अनुपालन हेतु इस डेटा का उपयोग करेंगे।",
+    preCallConsentLabel: "मैं इस वीडियो सत्र को रिकॉर्ड और सुरक्षित रूप से संग्रहीत किए जाने के लिए स्पष्ट सहमति देता/देती हूँ।",
+    startVideoCallBtn: "वीडियो कॉल शुरू करें",
     listening: "सुन रहा हूँ...",
     saySomething: "AI से कुछ कहें...",
     
@@ -134,7 +144,7 @@ export const translations = {
     rbiCompliant: "RBI मान्यताप्राप्त",
     endToEndEncrypted: "एंड-टू-एंड एन्क्रिप्टेड",
     zeroAppFee: "₹० अर्ज शुल्क",
-    footerText: "© २०२६ VeriCall by TenzorX · पूनावाला फिनकॉर्प हॅकाथॉन",
+    footerText: "© २०२६ Vantage AI by TenzorX · पूनावाला फिनकॉर्प हॅकाथॉन",
     appDashboard: "ॲप्लिकेशन डॅशबोर्ड",
     
     // Call Page
@@ -149,6 +159,11 @@ export const translations = {
     preparingOffer: "वैयक्तिकृत कर्ज ऑफर तयार करत आहे...",
     finalizingOffer: "कर्ज अर्जाला अंतिम रूप देत आहे...",
     recordingNotice: "ही कॉल सुरक्षितपणे रेकॉर्ड आणि विश्लेषित केली जात आहे.",
+    preCallDisclaimerTitle: "महत्त्वाची सूचना",
+    preCallDisclaimerBody: "व्हिडिओ KYC कॉल सुरू होण्यापूर्वी कृपया संमती द्या: हे सत्र ओळख पडताळणी, फसवणूक प्रतिबंध, अनुपालन, ऑडिट आणि ग्राहक सुरक्षिततेसाठी रेकॉर्ड, जतन आणि प्रक्रिया केले जाऊ शकते.",
+    preCallDisclaimerBody2: "रेकॉर्ड केलेल्या डेटामध्ये तुमचा आवाज, व्हिडिओ, कागदपत्रे आणि सत्रादरम्यान दिलेली उत्तरे समाविष्ट असू शकतात. अधिकृत टीम आणि नियमनबद्ध सेवा पुरवठादार हा डेटा फक्त पडताळणी आणि अनुपालनासाठी वापरतील.",
+    preCallConsentLabel: "मी या व्हिडिओ सत्राचे रेकॉर्डिंग आणि सुरक्षित साठवणुकीस स्पष्ट संमती देतो/देते.",
+    startVideoCallBtn: "व्हिडिओ कॉल सुरू करा",
     listening: "ऐकत आहे...",
     saySomething: "AI ला काहीतरी सांगा...",
     

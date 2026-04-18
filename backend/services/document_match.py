@@ -1,4 +1,4 @@
-"""VeriCall Document Matcher Phase — Groq Vision Agent."""
+"""Vantage AI Document Matcher Phase — Groq Vision Agent."""
 
 import os
 import re
@@ -377,7 +377,7 @@ def _reverse_geocode_city(latitude: float | None, longitude: float | None) -> st
                     "zoom": 10,
                     "addressdetails": 1,
                 },
-                headers={"User-Agent": "vericall-kyc/1.0"},
+                headers={"User-Agent": "vantage-ai-kyc/1.0"},
             )
         if not res.is_success:
             return None

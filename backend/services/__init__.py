@@ -1,1 +1,1 @@
-"""VeriCall backend services (risk engine, etc.)."""
+"""Vantage AI backend services (risk engine, etc.)."""

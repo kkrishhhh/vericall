@@ -23,7 +23,7 @@ import re
 import logging
 from typing import Any
 
-logger = logging.getLogger("vericall.rag")
+logger = logging.getLogger("vantage.rag")
 
 # Path to RBI KYC Master Direction text file
 _RBI_TEXT_PATH = os.path.join(

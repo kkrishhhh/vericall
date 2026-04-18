@@ -1,4 +1,4 @@
-"""VeriCall Fraud Detection — multi-signal fraud flag engine."""
+"""Vantage AI Fraud Detection — multi-signal fraud flag engine."""
 
 from models import CustomerData, FaceAnalysisResponse, FraudFlag
 from services.risk_engine import build_decision_reasons, compute_risk_score

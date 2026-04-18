@@ -45,7 +45,7 @@ from agents.kyc_agent import run_kyc_agent
 from agents.document_agent import run_document_agent
 from agents.decision_agent import run_decision_agent
 
-logger = logging.getLogger("vericall.orchestrator")
+logger = logging.getLogger("vantage.orchestrator")
 
 # Groq model for orchestrator reasoning and tool-calling
 ORCHESTRATOR_MODEL = "llama-3.3-70b-versatile"
@@ -150,7 +150,7 @@ ORCHESTRATOR_TOOLS = [
 ]
 
 # System prompt for the orchestrator LLM
-_ORCHESTRATOR_SYSTEM_PROMPT = """You are the OrchestratorAgent for VeriCall, an RBI-compliant loan origination system.
+_ORCHESTRATOR_SYSTEM_PROMPT = """You are the OrchestratorAgent for Vantage AI, an RBI-compliant loan origination system.
 
 Your role is to coordinate 4 sub-agents based on the current session state and user action:
 1. run_interview — for collecting and validating customer interview data

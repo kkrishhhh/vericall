@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎥 VeriCall — AI-Powered Video Loan Origination System
+# 🎥 Vantage AI — AI-Powered Video Loan Origination System
 
 **Real-time KYC · Agentic Workflow · RBI-Compliant · Multilingual**
 
@@ -9,14 +9,14 @@
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20Llama%203.3-ff6600?style=for-the-badge)](https://groq.com)
 
-> **VeriCall** is a production-grade, end-to-end AI-powered loan origination platform that replaces traditional in-branch KYC with a 5-minute live video call. An AI agent conducts the interview, verifies identity documents via OCR and Aadhaar checksum, detects fraud in real-time, and generates instant pre-approved loan offers — all fully compliant with RBI V-CIP and KYC Master Direction 2016.
+> **Vantage AI** is a production-grade, end-to-end AI-powered loan origination platform that replaces traditional in-branch KYC with a 5-minute live video call. An AI agent conducts the interview, verifies identity documents via OCR and Aadhaar checksum, detects fraud in real-time, and generates instant pre-approved loan offers — all fully compliant with RBI V-CIP and KYC Master Direction 2016.
 
 </div>
 
 ---
 
 ## 📑 Table of Contents
-1. [🎯 What is VeriCall?](#-what-is-vericall)
+1. [🎯 What is Vantage AI?](#-what-is-vantage-ai)
 2. [🌟 Key Features](#-key-features)
 3. [🏗️ System & Multi-Agent Architecture](#-system--multi-agent-architecture)
 4. [🛠️ Tech Stack](#️-tech-stack)
@@ -27,11 +27,11 @@
 
 ---
 
-## 🎯 What is VeriCall?
+## 🎯 What is Vantage AI?
 
 Traditional loan origination requires physical branch visits, manual document verification (taking days), human agents asking repetitive questions, and paper-based consent trails. 
 
-**VeriCall** replaces this with:
+**Vantage AI** replaces this with:
 - **AI-powered video KYC** via a live webcam call
 - **Real-time speech-to-text** (Deepgram) for natural conversation
 - **LLM-based interview agent** (Groq Llama 3.3 70B) that adapts to the customer
@@ -58,7 +58,7 @@ Traditional loan origination requires physical branch visits, manual document ve
 
 ## 🏗️ System & Multi-Agent Architecture
 
-VeriCall is orchestrated by a **Multi-Agent System**. Instead of a single massive prompt, an Orchestrator Agent analyzes the user's state and routes tasks to specialized sub-agents. 
+Vantage AI is orchestrated by a **Multi-Agent System**. Instead of a single massive prompt, an Orchestrator Agent analyzes the user's state and routes tasks to specialized sub-agents. 
 
 ```mermaid
 graph TD
@@ -144,8 +144,8 @@ NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8001
 
 ### 2. Backend Setup
 ```bash
-git clone https://github.com/kkrishhhh/vericall.git
-cd vericall/backend
+git clone https://github.com/<your-org>/<your-repo>.git
+cd backend
 
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate

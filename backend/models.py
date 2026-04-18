@@ -1,4 +1,4 @@
-"""Pydantic models for VeriCall API inputs and outputs."""
+"""Pydantic models for Vantage AI API inputs and outputs."""
 
 from pydantic import BaseModel, Field
 from typing import Optional

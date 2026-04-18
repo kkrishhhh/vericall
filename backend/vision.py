@@ -1,4 +1,4 @@
-"""VeriCall Vision — DeepFace age estimation (multi-frame median + claim comparison)."""
+"""Vantage AI Vision — DeepFace age estimation (multi-frame median + claim comparison)."""
 
 import base64
 import os

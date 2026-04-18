@@ -25,7 +25,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem("vericall_last_session");
+      const raw = sessionStorage.getItem("vantage_last_session");
       if (raw) setLastLocal(JSON.parse(raw) as AuditSession);
     } catch {
       setLastLocal(null);
