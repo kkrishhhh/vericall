@@ -406,6 +406,14 @@ function CallPageInner() {
     window.location.href = "/";
   }, [stopMediaStream]);
 
+  const handleConfirmLanguage = () => {
+    setVerifiedSession((prev) => {
+      if (!prev) return prev;
+      return { ...prev, language: activeLanguage };
+    });
+    setIsLanguageConfirmed(true);
+  };
+
   // ── 1. Initialize camera + mic ─────────────────────────────
   useEffect(() => {
     if (!isOtpVerified || !isLanguageConfirmed) return;
@@ -787,7 +795,14 @@ function CallPageInner() {
         const utterance = new SpeechSynthesisUtterance(data.message);
         utterance.rate = 1;
         utterance.pitch = 1;
-        utterance.lang = TTS_LANG_MAP[activeLanguage] || "en-IN";
+        const ttsLang = TTS_LANG_MAP[activeLanguage] || "en-IN";
+        utterance.lang = ttsLang;
+
+        const voices = window.speechSynthesis.getVoices();
+        const voiceByLang = voices.find((v) => v.lang.toLowerCase().startsWith(ttsLang.toLowerCase().split("-")[0]));
+        if (voiceByLang) {
+          utterance.voice = voiceByLang;
+        }
 
         // Prevent GC of utterance before onend fires
         speechWindow._utterances = speechWindow._utterances || [];
@@ -1347,7 +1362,7 @@ function CallPageInner() {
             </div>
           )}
           {phase === "conversation" && sttStatus === "connecting" && (
-            <div className="text-[11px] text-slate-500">Starting voice…</div>
+            <div className="text-[11px] text-slate-500">{t.connectingCall}</div>
           )}
           {phase === "analyzing" && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
@@ -1355,7 +1370,7 @@ function CallPageInner() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span className="text-xs text-amber-400 font-medium">Processing</span>
+              <span className="text-xs text-amber-400 font-medium">{t.analyzingDetails}</span>
             </div>
           )}
         </div>
@@ -1449,9 +1464,9 @@ function CallPageInner() {
             <div className="w-full max-w-2xl mx-auto py-3 sm:py-4">
               <div className="entry-zoom-card rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_8px_45px_rgba(27,43,107,0.1)] sm:p-6 lg:p-7">
                 <div className="mb-6 text-center">
-                  <h2 className="text-[30px] font-bold tracking-tight text-slate-900 leading-[1.1]">Select Language</h2>
+                  <h2 className="text-[30px] font-bold tracking-tight text-slate-900 leading-[1.1]">{t.chooseLanguage}</h2>
                   <p className="mt-2 text-sm text-slate-500">
-                    Choose your preferred language before starting Video KYC.
+                    {t.selectLanguageDesc}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -1471,10 +1486,10 @@ function CallPageInner() {
                   ))}
                 </div>
                 <button
-                  onClick={() => setIsLanguageConfirmed(true)}
+                  onClick={handleConfirmLanguage}
                   className="mt-6 w-full rounded-2xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(27,43,107,0.25)] transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_24px_rgba(27,43,107,0.3)]"
                 >
-                  Continue
+                  {t.continueBtn}
                 </button>
               </div>
             </div>
