@@ -11,6 +11,7 @@ import { LumaSpin } from "@/components/ui/luma-spin";
 import { AnimatedDownload } from "@/components/ui/animated-download";
 import { Waves } from "@/components/ui/wave-background";
 import { IconContainer, Radar } from "@/components/ui/radar-effect";
+import { FeedbackCard } from "@/components/ui/feedback-card";
 import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 import VantageLoader from "@/components/ui/vantage-loader";
@@ -58,6 +59,7 @@ type CallPhase =
   | "preapproval-review"
   | "loan-docs"
   | "offer"
+  | "feedback"
   | "error";
 
 type DocumentRequirement = {
@@ -1187,7 +1189,19 @@ function CallPageInner() {
     }
     if (phase === "offer") {
       setPhase("loan-docs");
+      return;
     }
+    if (phase === "feedback") {
+      setPhase("offer");
+    }
+  };
+
+  const handleProceedAfterFinalStep = () => {
+    setPhase("feedback");
+  };
+
+  const handleFeedbackComplete = () => {
+    window.location.href = "/";
   };
 
   const handleDocumentSubmit = async () => {
@@ -1386,7 +1400,7 @@ function CallPageInner() {
   const isKycUploadStage = isOtpVerified && isLanguageConfirmed && phase === "kyc-upload";
   const isPreapprovalStage = isOtpVerified && isLanguageConfirmed && phase === "preapproval-review";
   const isLoanDocsStage = isOtpVerified && isLanguageConfirmed && phase === "loan-docs";
-  const isOfferStage = isOtpVerified && isLanguageConfirmed && phase === "offer";
+  const isOfferStage = isOtpVerified && isLanguageConfirmed && (phase === "offer" || phase === "feedback");
   const isConversationStage = isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing");
   const isPreCallStage = !isOtpVerified || !isLanguageConfirmed;
 
@@ -2183,6 +2197,13 @@ function CallPageInner() {
                       </button>
                       <button
                         type="button"
+                        onClick={handleProceedAfterFinalStep}
+                        className="rounded-xl bg-gradient-to-r from-[#1B2B6B] to-[#2563EB] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:opacity-95"
+                      >
+                        Next
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleDownloadApplicationPdf}
                         disabled={isDownloadAnimating}
                         className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-[#1B2B6B] transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2206,6 +2227,34 @@ function CallPageInner() {
                 </div>
               )}
             </>
+          )}
+
+          {isOtpVerified && isLanguageConfirmed && phase === "feedback" && (
+            <div className="w-full mx-auto py-8 sm:py-10 flex flex-col items-center gap-6 px-3">
+              <div className="entry-zoom-card w-full max-w-3xl rounded-[28px] border border-blue-100 bg-gradient-to-b from-white to-blue-50/70 p-6 text-center shadow-[0_12px_50px_rgba(37,99,235,0.14)] sm:p-8">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-blue-600">Application Completed</p>
+                <h2 className="mt-2 text-[30px] sm:text-[36px] font-bold tracking-tight text-slate-900 leading-[1.1]">
+                  Loan application complete
+                </h2>
+                <p className="mt-3 text-sm sm:text-base text-slate-600 max-w-2xl mx-auto">
+                  Please wait for one of our employees to get in touch with you.
+                </p>
+
+                <div className="mt-6 flex justify-center">
+                  <FeedbackCard onComplete={handleFeedbackComplete} />
+                </div>
+
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={handleGoToPreviousStep}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Back to Final Decision
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {isOtpVerified && isLanguageConfirmed && phase === "offer" && offerData && !finalDecision && !showOfferLoadingScreen && (
