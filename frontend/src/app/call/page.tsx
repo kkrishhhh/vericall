@@ -1182,6 +1182,7 @@ function CallPageInner() {
                 ...preapproval,
                 aadhaar_photo_base64: verifyData.aadhaar_photo_base64 || null,
                 pan_photo_base64: verifyData.pan_photo_base64 || null,
+                selfie_image: capturedSelfie || null,
                 blood_group: verifyData.blood_group || null,
                 selfie_match_score: verifyData.selfie_match_score || null,
                 selfie_match: verifyData.selfie_match || null,
@@ -1248,7 +1249,7 @@ function CallPageInner() {
   const isConversationStage = isOtpVerified && isLanguageConfirmed && (phase === "conversation" || phase === "analyzing");
 
   return (
-  <main className={`relative h-screen overflow-x-hidden overflow-y-hidden flex flex-col ${theme === "dark" ? "bg-slate-950" : "bg-white"}`}>
+   <main className={`relative ${isConversationStage ? "h-screen overflow-x-hidden overflow-y-hidden" : "min-h-screen overflow-x-hidden overflow-y-auto"} flex flex-col ${theme === "dark" ? "bg-slate-950" : "bg-white"}`}>
       <div className="orb orb-1" />
       <div className="orb orb-2" />
 
@@ -1364,7 +1365,7 @@ function CallPageInner() {
       {/* Main Content */}
       <div className="relative z-10 mx-auto flex h-[calc(100vh-48px)] w-full max-w-[1600px] flex-col gap-3 px-3 py-3 lg:flex-row lg:px-4">
         {/* Left: Video */}
-        <div className={`flex min-h-0 flex-col items-center overflow-y-auto p-3 lg:p-4 ${isConversationStage ? "lg:flex-[0.76]" : "lg:flex-1"} ${(isKycUploadStage || isPreapprovalStage || isLoanDocsStage) ? "justify-start" : "justify-center"}`}>
+        <div className={`flex min-h-0 flex-col items-center overflow-y-auto p-3 lg:p-4 ${isConversationStage ? "lg:flex-[0.76]" : "lg:flex-1"} ${(isKycUploadStage || isPreapprovalStage || isLoanDocsStage || isOfferStage) ? "justify-start" : "justify-center"}`}>
           {!isOtpVerified && (
             <div className="fixed inset-0 z-20 flex items-center justify-center bg-white px-4">
               <svg
@@ -1877,7 +1878,7 @@ function CallPageInner() {
               )}
 
               {!showOfferLoadingScreen && (
-                <div className="w-full max-w-2xl mx-auto py-6 sm:py-8 flex flex-col gap-6">
+                <div className="w-full mx-auto py-6 sm:py-8 flex flex-col gap-6 px-1 sm:px-3 lg:px-4">
                   <div className="text-center">
                     <p
                       className={`text-[10px] font-semibold uppercase tracking-[0.28em] text-[#2563EB] transition-all duration-700 ${
@@ -1901,7 +1902,7 @@ function CallPageInner() {
                       </p>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 text-sm">
                       <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                         <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Final Approved Amount</p>
                         <p className="text-xl font-bold text-slate-900">INR {Number(finalDecision.final_approved_amount || 0).toLocaleString("en-IN")}</p>
@@ -1910,7 +1911,7 @@ function CallPageInner() {
                         <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Interest Rate</p>
                         <p className="text-xl font-bold text-slate-900">{finalDecision.interest_rate}%</p>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:col-span-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:col-span-2 lg:col-span-1 xl:col-span-2">
                         <p className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">Tenure Options</p>
                         <p className="text-lg font-semibold text-slate-900">{(finalDecision.tenure_options || []).join(", ") || "N/A"} months</p>
                       </div>

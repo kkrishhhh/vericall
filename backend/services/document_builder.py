@@ -36,7 +36,23 @@ def build_document_pack(session: dict) -> dict:
     purpose = str(_pick(extracted, "purpose", "loan_purpose", default=""))
     loan_type = str(_pick(extracted, "loan_type", default=purpose or "personal"))
     consent = bool(_pick(extracted, "consent", default=False))
-    aadhaar_photo_base64 = _pick(extracted, "aadhaar_photo_base64", default=None)
+    document_verification = (risk.get("document_verification") or {}) if isinstance(risk, dict) else {}
+    aadhaar_photo_base64 = _pick(
+        extracted,
+        "aadhaar_photo_base64",
+        "selfie_image",
+        "selfie_base64",
+        "pan_photo_base64",
+        default=document_verification.get("aadhaar_photo_base64")
+        or document_verification.get("pan_photo_base64")
+        or None,
+    )
+    selfie_image = _pick(
+        extracted,
+        "selfie_image",
+        "selfie_base64",
+        default=document_verification.get("selfie_image") or None,
+    )
     campaign_link = session.get("campaign_link") or ""
     document_requirements = session.get("document_requirements") or extracted.get("document_requirements") or []
 
@@ -52,6 +68,7 @@ def build_document_pack(session: dict) -> dict:
         "session_id": session.get("session_id") or "",
         "application_timestamp": _iso_to_local(session.get("logged_at")),
         "aadhaar_photo_base64": aadhaar_photo_base64,
+        "selfie_image": selfie_image,
         "campaign_link": campaign_link,
         "document_requirements": document_requirements,
     }

@@ -176,7 +176,12 @@ def render_application_form_pdf(doc: dict) -> bytes:
     pdf.setFillColor(colors.HexColor("#1E3A8A"))
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawString(right_x + 12, row1_y + row1_h - 22, "Identity Photo")
-    _draw_photo_card(pdf, _text(fields.get("aadhaar_photo_base64")), right_x + 12, row1_y + 12, right_col_w - 24, row1_h - 48)
+    identity_photo = (
+        _text(fields.get("aadhaar_photo_base64"))
+        or _text(fields.get("selfie_image"))
+        or _text(fields.get("pan_photo_base64"))
+    )
+    _draw_photo_card(pdf, identity_photo, right_x + 12, row1_y + 12, right_col_w - 24, row1_h - 48)
 
     # Row 2: loan summary + risk summary
     row2_h = 145
@@ -281,12 +286,12 @@ def render_application_form_pdf(doc: dict) -> bytes:
     pdf.drawString(inner_x, footer_y + 5, "Final sanction remains subject to policy controls and verification checks.")
 
     pdf.setStrokeColor(colors.HexColor("#94A3B8"))
-    pdf.line(inner_x + 6, footer_y - 7, inner_x + 176, footer_y - 7)
-    pdf.line(inner_x + inner_w - 176, footer_y - 7, inner_x + inner_w - 6, footer_y - 7)
+    pdf.line(inner_x + 6, footer_y - 3, inner_x + 176, footer_y - 3)
+    pdf.line(inner_x + inner_w - 176, footer_y - 3, inner_x + inner_w - 6, footer_y - 3)
     pdf.setFillColor(colors.HexColor("#64748B"))
     pdf.setFont("Helvetica", 8)
-    pdf.drawString(inner_x + 6, footer_y - 18, "Applicant Signature")
-    pdf.drawRightString(inner_x + inner_w - 6, footer_y - 18, "Authorized Signatory")
+    pdf.drawString(inner_x + 6, footer_y - 16, "Applicant Signature")
+    pdf.drawRightString(inner_x + inner_w - 6, footer_y - 16, "Authorized Signatory")
 
     pdf.save()
     return buf.getvalue()
@@ -493,12 +498,12 @@ def render_kyc_review_pdf(payload: dict) -> bytes:
     )
 
     pdf.setStrokeColor(colors.HexColor("#94A3B8"))
-    pdf.line(inner_x + 6, footer_y - 2, inner_x + 176, footer_y - 2)
-    pdf.line(inner_x + inner_w - 176, footer_y - 2, inner_x + inner_w - 6, footer_y - 2)
+    pdf.line(inner_x + 6, footer_y + 2, inner_x + 176, footer_y + 2)
+    pdf.line(inner_x + inner_w - 176, footer_y + 2, inner_x + inner_w - 6, footer_y + 2)
     pdf.setFillColor(colors.HexColor("#64748B"))
     pdf.setFont("Helvetica", 8)
-    pdf.drawString(inner_x + 6, footer_y - 13, "Customer acknowledgement")
-    pdf.drawRightString(inner_x + inner_w - 6, footer_y - 13, "Authorized reviewer")
+    pdf.drawString(inner_x + 6, footer_y - 10, "Customer acknowledgement")
+    pdf.drawRightString(inner_x + inner_w - 6, footer_y - 10, "Authorized reviewer")
 
     pdf.save()
     return buf.getvalue()
