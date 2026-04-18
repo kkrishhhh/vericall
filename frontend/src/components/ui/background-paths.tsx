@@ -97,8 +97,8 @@ export function BackgroundPaths({ title = "Background Paths" }: { title?: string
 
 export function BackgroundPathsLayer() {
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[28px]">
-      <div className="absolute inset-0 bg-gradient-to-b from-white via-blue-50/55 to-white" />
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[28px] opacity-65">
+      <div className="absolute inset-0 bg-gradient-to-b from-white via-blue-50/45 to-white" />
       <FloatingPaths position={1} />
       <FloatingPaths position={-1} />
     </div>

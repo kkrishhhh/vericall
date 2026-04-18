@@ -1617,7 +1617,11 @@ function CallPageInner() {
       <div className="relative z-10 mx-auto flex h-[calc(100vh-48px)] w-full max-w-[1600px] flex-col gap-3 px-3 py-3 lg:flex-row lg:px-4">
         {/* Left: Video */}
         <div className={`relative flex min-h-0 flex-col items-center overflow-y-auto p-3 lg:p-4 ${isConversationStage ? "lg:flex-[0.76]" : "lg:flex-1"} ${(isKycUploadStage || isPreapprovalStage || isLoanDocsStage || isOfferStage) ? "justify-start" : "justify-center"}`}>
-          {showJourneyBackground && <BackgroundPathsLayer />}
+          {showJourneyBackground && (
+            <div className="absolute inset-0 -z-10">
+              <BackgroundPathsLayer />
+            </div>
+          )}
           {!isOtpVerified && (
             <div className="fixed inset-0 z-20 flex items-center justify-center bg-white px-4">
               <svg

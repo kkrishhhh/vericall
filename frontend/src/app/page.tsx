@@ -11,7 +11,6 @@ import { MenuToggleIcon } from "@/components/ui/menu-toggle-icon";
 import { useScroll } from "@/components/ui/use-scroll";
 import { translations } from "@/lib/translations";
 import ScrollCard from "@/components/ui/scroll-card";
-import VantageLoader from "@/components/ui/vantage-loader";
 
 // ── Dynamic Three.js (no SSR) ──
 const ThreeBackground = dynamic(() => import("@/components/ThreeBackground"), {
@@ -148,7 +147,7 @@ function LandingPageContent() {
     BACKEND,
     "http://127.0.0.1:8001",
   ]);
-  const [activeBackendUrl, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");
+  const [, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const mainCardRef = useRef<HTMLDivElement>(null);
@@ -957,13 +956,11 @@ function LandingPageContent() {
                 style={{ background: "linear-gradient(135deg, #1B2B6B 0%, #2563EB 100%)" }}
               >
                 {loading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <VantageLoader size="sm" showLogo={false} />
+                  <span className="block w-full text-center">
                     Sending request...
                   </span>
                 ) : "Request Video KYC"}
               </button>
-              <p className="text-[11px] text-white/30 mt-2 text-center">Backend: {activeBackendUrl}</p>
 
               <div className="mt-4 flex items-center justify-center gap-3 text-[10px] text-white/20">
                 <span className="flex items-center gap-1"><Shield size={10} className="text-green-400/50" />{t.rbiCompliant}</span>
