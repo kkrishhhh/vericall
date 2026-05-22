@@ -129,11 +129,8 @@ def verhoeff_checksum(number: str) -> dict[str, Any]:
 def face_match(selfie_b64: str, aadhaar_photo_b64: str) -> dict[str, Any]:
     """Compare selfie against Aadhaar photo for identity verification.
 
-    This is a simulated match using deterministic hashing for demo
-    reproducibility. In production, wire this to a real biometric
-    SDK (e.g., AWS Rekognition, Azure Face, or local InsightFace).
-
-    Per RBI V-CIP: live photo must be matched against OVD photo.
+    Uses DeepFace biometric verification when available. Falls back to a
+    deterministic simulated score if the library or model cannot be loaded.
     """
     selfie_ok = isinstance(selfie_b64, str) and len(selfie_b64) > 100
     aadhaar_ok = isinstance(aadhaar_photo_b64, str) and len(aadhaar_photo_b64) > 100
@@ -142,6 +139,8 @@ def face_match(selfie_b64: str, aadhaar_photo_b64: str) -> dict[str, Any]:
         return {
             "match": False,
             "score": 0.0,
+            "threshold": 0.65,
+            "verified": False,
             "reason": "Selfie image is empty or too small",
         }
 
@@ -149,21 +148,54 @@ def face_match(selfie_b64: str, aadhaar_photo_b64: str) -> dict[str, Any]:
         return {
             "match": False,
             "score": 0.0,
+            "threshold": 0.65,
+            "verified": False,
             "reason": "Aadhaar photo is empty or too small (could not extract face from card)",
         }
 
-    # Deterministic simulated match score
-    combined = f"{len(selfie_b64)}|{len(aadhaar_photo_b64)}|{selfie_b64[:20]}|{aadhaar_photo_b64[:20]}"
-    hashed = int(hashlib.sha256(combined.encode()).hexdigest()[:8], 16)
-    score = round(0.55 + (hashed % 41) / 100, 2)  # Range: 0.55–0.95
     threshold = 0.65
+    try:
+        from deepface import DeepFace  # type: ignore
 
-    return {
-        "match": score >= threshold,
-        "score": score,
-        "threshold": threshold,
-        "reason": f"Face match score {score:.2f} {'≥' if score >= threshold else '<'} threshold {threshold}",
-    }
+        compare = DeepFace.verify(
+            img1_path=f"data:image/jpeg;base64,{aadhaar_photo_b64}",
+            img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+            enforce_detection=False,
+            detector_backend="retinaface",
+        )
+
+        distance = compare.get("distance")
+        verified = bool(compare.get("verified"))
+        score = 0.0
+        if isinstance(distance, (int, float)):
+            score = max(0.0, min(1.0, round(1.0 - float(distance), 3)))
+
+        match = verified or score >= threshold
+        return {
+            "match": match,
+            "score": score,
+            "threshold": threshold,
+            "verified": verified,
+            "distance": distance,
+            "reason": (
+                f"DeepFace biometric verification {'passed' if match else 'failed'} "
+                f"(score={score:.3f}, verified={verified})"
+            ),
+        }
+    except Exception as exc:
+        combined = f"{len(selfie_b64)}|{len(aadhaar_photo_b64)}|{selfie_b64[:20]}|{aadhaar_photo_b64[:20]}"
+        hashed = int(hashlib.sha256(combined.encode()).hexdigest()[:8], 16)
+        score = round(0.55 + (hashed % 41) / 100, 2)
+        return {
+            "match": score >= threshold,
+            "score": score,
+            "threshold": threshold,
+            "verified": False,
+            "reason": (
+                f"Fallback biometric match used due to: {str(exc)}; "
+                f"simulated score={score:.2f}"
+            ),
+        }
 
 
 # ── Tool 4: check_sanctions_list ─────────────────────────────────

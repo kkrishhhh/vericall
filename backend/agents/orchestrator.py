@@ -40,6 +40,7 @@ from agents.state import (
     OrchestrateRequest,
     OrchestrateResponse,
 )
+from agents.event_bus import AgentEventBus
 from agents.interview_agent import run_interview_agent
 from agents.kyc_agent import run_kyc_agent
 from agents.document_agent import run_document_agent
@@ -174,13 +175,18 @@ Rules:
 class OrchestratorAgent:
     """Central orchestrator that manages the multi-agent pipeline.
 
-    Uses Groq's tool-calling feature to decide which sub-agent to invoke
-    based on the current state and user action. Falls back to deterministic
-    routing if LLM is unavailable.
+    Uses an event-driven A2A bus to decouple agent dispatch from routing.
+    The bus routes normalized events to subscribed sub-agents, enabling
+    a production-like event workflow.
     """
 
     def __init__(self) -> None:
         self._groq_client = None
+        self._bus = AgentEventBus()
+        self._bus.subscribe("InterviewAgent", run_interview_agent)
+        self._bus.subscribe("KYCAgent", run_kyc_agent)
+        self._bus.subscribe("DocumentAgent", run_document_agent)
+        self._bus.subscribe("DecisionAgent", run_decision_agent)
 
     def _get_groq_client(self):
         """Lazy-initialize the Groq client."""
@@ -363,26 +369,20 @@ class OrchestratorAgent:
 
         return "InterviewAgent"
 
-    @staticmethod
     async def _dispatch(
+        self,
         agent_name: str,
         state: AgentState,
         payload: dict[str, Any],
     ) -> AgentState:
-        """Dispatch to the resolved sub-agent."""
-        if agent_name == "InterviewAgent":
-            return await run_interview_agent(state, payload)
-        elif agent_name == "KYCAgent":
-            return await run_kyc_agent(state, payload)
-        elif agent_name == "DocumentAgent":
-            return await run_document_agent(state, payload)
-        elif agent_name == "DecisionAgent":
-            return await run_decision_agent(state, payload)
-        else:
+        """Dispatch to the resolved sub-agent through the A2A event bus."""
+        try:
+            return await self._bus.publish(agent_name, state, payload)
+        except Exception as e:
             state.log_error(
                 "OrchestratorAgent",
                 "UNKNOWN_AGENT",
-                f"No handler for agent: {agent_name}",
+                f"No handler for agent: {agent_name}: {str(e)}",
                 recoverable=False,
             )
             return state

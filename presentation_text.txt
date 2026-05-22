@@ -1,0 +1,416 @@
+pages 16
+--- PAGE 1 ---
+VANTAGE
+Verification and AI for next gen trust , authentication and global evaluation
+Solution for: Problem Statement 3 - Agentic AI Video Call–Based Onboarding
+
+--- PAGE 2 ---
+VANTAGE
+Link to introduction video (demo of prototype attached separately in the
+submission) :
+ 
+Click on this link
+(If that doesn’t work: https://drive.google.com/file/d/1IugQH0Bu0nfO24huxIm_DFhvk52_4Huw/view?
+usp=sharing)
+
+--- PAGE 3 ---
+About VANTAGE
+VANTAGE enhances decision-making by integrating risk
+analysis, document verification, and policy-aware evaluation
+into a single flow. By reducing manual effort and enabling
+instant pre-approvals, it empowers financial institutions to
+deliver faster, smarter, and more reliable lending
+experiences.
+VANTAGE is an AI-powered onboarding platform that
+transforms the traditional loan journey into a seamless digital
+experience. It combines real-time video interaction,
+intelligent data extraction, and automated KYC verification
+using Aadhaar, PAN, and facial analysis, ensuring fast, secure,
+and compliant user onboarding.
+VANTAGEVideo KYC RBI - Compliant
+Multilingual Agentic
+
+
+--- PAGE 4 ---
+AS IS TO BEPROCESS EVOLUTION
+Longer paper form
+Customer fills manuallyID document copy 
+Physical or scannedSelfie / photo upload 
+Inconsistent quality
+Submission
+Branch / Email / PortalQueue & Wait
+Days to weeksManual data entry
+Re-keying form fields
+Compliance check
+Manual rules lookupBack & Forth queries
+Missing info, re-submitPhoto Verification
+Human eye check only
+Challenges
+Compliance check
+Manual rules lookupHigh error rate 
+Manual rules lookupFraud blind spots 
+No geo / age checks
+Poor CX
+Customer drops offCompliance risk
+Audit failuresNo personalisation  
+Generic offers only
+Secure link via SMS / WhatsApp 
+Customer invited instantly . consent captured
+Joins live AI video call 
+Verified, encrypted session . language selected
+Captures video, audio + geo + device 
+STT transcription . liveness . location verified
+CV age  + liveness
+Computer vision
+STT → Text
+Speech transcription
+STT → Text
+Speech transcription
+AI agent auto-fill & verify 
+KYC . Fraud Check . Document Validation . Risk Score
+Instant personalised offer 
+Generated on the call . Policy-aware decision
+Customer gets offer
+Live online
+Full audit log
+Everything recorded
+Impacts
+Instant KYC 
+Minutes, not daysZero-manual work
+Fully automatedAI-driven offers
+Personalised & Compliant
+
+
+--- PAGE 5 ---
+VANTAGE Voice 
+ Vision Guard
+AutoFlow Offer EngineLeverages advanced Speech-to-Text
+(STT) to convert live audio into
+accurate, structured, and searchable
+digital intelligence for real-time
+insights and efficient retrieval.Employs computer vision for facial
+analysis to estimate age and
+leverages geo-location tracking to
+identify potential fraud signals in real
+time.
+Orchestrates a fully paperless journey
+by automatically converting
+conversational data into structured
+digital application forms.Synthesizes bureau data and LLM-
+driven insights to generate
+personalized, risk-calibrated loan offers
+instantly, enabling faster decision-
+making and a seamless customer
+experience.
+Key Features
+
+
+--- PAGE 6 ---
+Agentic 
+Self-Recovery
+On failure, agent requests
+re-upload, retries up to 3x,
+escalates to human if
+needed.
+Multilingual Support
+Vantage AI understands
+and responds in Hindi,
+English, and Marathi
+seamlessly.Comprehensive dashboard
+for approval rates, fraud
+breakdowns, and AI
+performance monitoring.
+DPDPA-compliant hashing
+and DigiLocker integration
+ensuring data residency on
+sovereign Indian servers.DeepFace compares live
+selfies against document
+photos to ensure biometric
+identity integrity.Secures every data touchpoint
+with AES-256 encryption, SHA-3
+hashing, and a zero-trust
+cryptographic fabric to keep
+customer data fully protected
+and compliant.Admin Analytics
+Security & Compliance  Selfie-vs-Document TrustLayer 
+Additional Features
+
+--- PAGE 7 ---
+High Level Architecture
+
+
+--- PAGE 8 ---
+Agentic Architecture
+Orchestrator Agent
+INTERVIEW
+AGENT
+KYC
+AGENT
+FRAUD 
+AGENT 
+DECISION
+AGENT3 tools 
+Preapproval
+calculator
+Consent Verifier
+Income
+inconsistency4 tools 
+Aadhar validation
+PAN validator 
+Liveness detector
+Document fetcher3 tools 
+Signal Aggregator
+Sanctions Screener
+Fraud Score
+Engine4 tools 
+Bureau scorer
+Propensity score
+Offer EMI
+generator
+Poly citation
+engine
+DOCUMENT
+AGENT4 tools 
+Vision OCR 
+Cross validator
+Geo-tag matcher
+Aadhar redactor
+A2A Protocol for Agent Communication
+No agent operates in isolation. When one agent produces a signal that another agent needs to act on, it emits a
+structured message via the A2A event bus, rather than returning to the orchestrator and back. This keeps the flow fast,
+auditable and decoupled. Any agent can emit a signal; any agent can subscribe to one. The Fraud agent is the primary
+subscriber, it aggregates signals from interview, KYC and Document agents to build a unified fraud score that gates the
+Decision agent.
+Example: Document agent detects a city mismatch → emits signal via A2A → Fraid agent updates score → Decision agent reads gate before generating offer.
+Any agent detects a 
+risk signal
+Emits structured message 
+via 
+A2A bus
+Fraud Agent 
+subscribes + 
+aggregates
+Unified fraud score
+ updated
+Decision agent 
+reads gate
+
+
+--- PAGE 9 ---
+Agentic Harness - Skills as Plugins
+What the Harness Does 
+The harness is the runtime - agents are just workers. The
+harness handles routing, context, retry and audit. 
+Context Injection 
+Each agent gets only required context - no raw data sharing.
+Dynamic Routing
+LLM selects the right agent at runtime - no hardcoding.
+Retry & Recovery
+Auto retries with fallback - zero session drops.
+Audit per Invocation
+Every call is logged - immutable audit trailSkills - Guardrails for known failure points
+Skills are micro-behaviours that we injected at the exact
+points when an LLM is most likely to hallucinate or
+violate a compliance rule.
+Compliance Gate
+Ensures RBI compliance before any output.
+Format Guard
+Validates Aadhaar & PAN before processing.
+Consent Block
+Blocks flow without user consent.
+PII Redactor
+Removes sensitive data before storage/logs.
+
+
+--- PAGE 10 ---
+Mandatory verbal consent - Aadhar masking (last 4
+only) - geotag on every session - recorded video
+stored on Indian servers
+Zero-Trust Security & DPDPA ComplianceCompliance checklist:
+RBI V-CIP
+DPDPA 2023
+PII hashed before storage - never stored in plaintext
+- right to erasure supported - data principal consent
+logged
+Aadhar Act
+No raw Aadhar stored - Verhoeff checksum only -
+number displayed as XXXX-XXXX-1234 - DigiLocker
+API plannedRBACZero-Trust 
+Arch
+Data 
+ResidencyHuman-in
+the-loop
+
+
+--- PAGE 11 ---
+CDN / Edge ComputeAI &
+InferenceData, Storage &
+AuditAWS Cloud Architecture
+CloudFront (India
+PoPs)
+WAF + Shield
+Advanced
+Route 53 DNS
+API Gateway (rate
+limiting, auth)
+ECS Fargate -
+Next.js 16 Frontend
+ECS Fargate -
+FastAPI Backend
+Lambda - OTP /
+Webhooks /
+Async jobs
+Auto-scaling
+groupsOpenAI API - GPT-
+4  turbo
+(conversation),
+vision (OCR)
+Deepgram Nova-2
+WebSocket STT
+Amazon
+SageMaker -
+autoscaling groupsRDS PostgreSQL -
+sessions, profiles 
+S3 - KYC docs ((AES-256,
+versioned)
+ElastiCache Redis - OTP,
+rate limits 
+ChromaDB - RBI RAG
+vectors,  CloudWatch
+immutable logs, KMS
+keys, DPDA PII hashing
+
+
+--- PAGE 12 ---
+AWS ECS Fargate:
+Containerized
+microservices auto-scale
+—frontend, FastAPI
+backend, and AI
+inference run
+independently, no server
+management.
+Multi-AZ Deployment:
+Active-active across
+Amazon Web Services
+ap-south-1 zones — auto
+failover ensures 99.9%
+SLA, no manual
+intervention.
+CI/CD Pipeline: Blue-
+green deploys, instant
+rollback, zero downtime.Independent Agent
+Scaling:  Each skill-plugin
+(Interview, KYC,
+Document, Decision)
+scales independently —
+no single bottleneck
+across the agentic
+harness.
+Deterministic Fallback:
+If LLM is unavailable,
+rule-based routing kicks
+in instantly —
+guaranteeing 100%
+uptime with zero session
+drops.
+Stateless Orchestrator:
+Stateless agents enable
+scalable concurrent
+users.PostgreSQL & Vector DB:
+Horizontally sharded
+sessions with read
+replicas; ChromaDB
+migrates to Pinecone for
+production-scale RAG
+without code changes.
+ElasticSearch: Enable
+fast searches across
+large datasets.
+S3 & CloudFront:
+Infinitely scalable KYC
+document storage with
+AES-256 encryption and
+edge-cached delivery
+across India.RBAC & Zero-Trust:
+Role-based access
+enforced at API gateway
+— scales across PFL ops,
+customer, and audit roles
+with JWT token
+validation.
+DPDPA-Compliant
+Storage: PII hashing layer
+scales—no raw data
+stored.
+Async Queue & Audit:
+SQS-backed jobs
+decouple heavy tasks
+from the live call;
+append-only audit trail
+migrates to DynamoDB
+for planet-scale logging.
+Scalibility
+
+
+--- PAGE 13 ---
+Feasibility and Viability
+FEASIBILITY
+VIABILITY
+Multimodal LLMs make real-time video KYC and document OCR deployable
+today
+India's DPI (Aadhaar, UPI, AA framework) provides the exact APIs needed
+RAG pipelines are production-proven for regulatory retrieval at scale
+India's lending market is a $300B+ opportunity with millions of underserved
+borrowers
+Cuts per-application cost from ~₹5,000 (branch) to under ₹50 via automation
+SaaS licensing to NBFCs = recurring, high-margin revenue at low marginal cost
+RBI compliance is a moat — regulation blocks competitors, not us
+
+
+--- PAGE 14 ---
+Future Scope
+NEXT STEPS:
+Federated Identity Graph
+Portable KYC via Account
+Aggregator framework
+Zero re-verification across
+lenders
+Consent-gated credit
+profile linked to Aadhaar +
+UPIAdaptive Underwriting
+Alternate data: UPI
+cashflow, GST filings, rental
+patterns
+Unlock 190M+ thin-file
+borrowers
+SHAP explainability for
+every decision
+Conversational Loan
+Servicing
+WhatsApp + voice agent
+for full loan lifecycle
+EMI reminders,
+restructuring & foreclosure
+quotes
+Every action verified via
+Aadhaar OTP consentLive Regulatory
+Intelligence
+Auto-ingest RBI/SEBI
+circulars in real-time
+Semantic diff-detection
+against prior decisions
+Automated compliance re-
+validation alerts
+
+
+--- PAGE 15 ---
+Meet
+The
+Team
+Krishna Thakur Nausheen RV Sakshi Narkhede
+
+
+--- PAGE 16 ---
+Thank you!
+

@@ -685,9 +685,10 @@ async def orchestrate_endpoint(req: OrchestrateRequest):
     pipeline (InterviewAgent → KYCAgent → DocumentAgent → DecisionAgent),
     and returns the updated state with the next UI phase.
 
-    The orchestrator uses Groq llama-3.3-70b-versatile with tool-calling
-    to determine which sub-agent to invoke. Falls back to deterministic
-    routing if the LLM is unavailable.
+    The orchestrator now uses an in-process A2A event bus to route events
+    to subscribed sub-agents. It still supports Groq tool-calling for
+    agent resolution and falls back to deterministic routing if the LLM
+    is unavailable.
 
     Features:
     - Agentic retry loop: DocumentAgent auto-requests re-upload on
