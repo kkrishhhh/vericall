@@ -1,10 +1,10 @@
 """Vantage AI Fraud Detection — multi-signal fraud flag engine."""
 
-from models import CustomerData, FaceAnalysisResponse, FraudFlag
-from services.risk_engine import build_decision_reasons, compute_risk_score
-from services.bureau import get_bureau_snapshot
-from services.propensity import compute_propensity
-from age_verification import fraud_flags_for_visual_age
+from .models import CustomerData, FaceAnalysisResponse, FraudFlag
+from .services.risk_engine import build_decision_reasons, compute_risk_score
+from .services.bureau import get_bureau_snapshot
+from .services.propensity import compute_propensity
+from .age_verification import fraud_flags_for_visual_age
 
 
 def assess_risk(

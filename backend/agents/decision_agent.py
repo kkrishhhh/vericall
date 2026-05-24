@@ -23,7 +23,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from agents.state import AgentState
+from .state import AgentState
 
 
 # ── Tool 1: bureau_score ─────────────────────────────────────────
@@ -199,7 +199,7 @@ async def query_rbi_policy_rag(decision_reason: str) -> dict[str, Any]:
     clauses from RBI KYC Master Direction 2016 for the given decision.
     """
     try:
-        from agents.rag_agent import PolicyRAGAgent
+        from .rag_agent import PolicyRAGAgent
         rag = PolicyRAGAgent.get_instance()
         results = rag.query(decision_reason, top_k=3)
         return {

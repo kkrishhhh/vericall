@@ -14,6 +14,23 @@ export default function ThreeBackground({ isDark = true }: Props) {
     if (!mountRef.current) return;
     const container = mountRef.current;
 
+    // Quick feature-detect for WebGL (works in most browsers)
+    const isWebGLAvailable = (): boolean => {
+      try {
+        const canvas = document.createElement("canvas");
+        return !!(
+          canvas.getContext("webgl2") ||
+          canvas.getContext("webgl") ||
+          canvas.getContext("experimental-webgl")
+        );
+      } catch (e) {
+        return false;
+      }
+    };
+
+    let renderer: THREE.WebGLRenderer | null = null;
+    let fallbackEl: HTMLDivElement | null = null;
+
     // ── Responsive particle count ──
     const isMobile = window.innerWidth < 768;
     const particleCount = isMobile ? 12000 : 22000;
@@ -27,10 +44,34 @@ export default function ThreeBackground({ isDark = true }: Props) {
     );
     camera.position.z = 5;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    container.appendChild(renderer.domElement);
+    // Create renderer guarded by availability check and try/catch
+    if (!isWebGLAvailable()) {
+      // Create a lightweight CSS fallback (non-animated) so the page still renders
+      fallbackEl = document.createElement("div");
+      fallbackEl.style.width = "100%";
+      fallbackEl.style.height = "100%";
+      fallbackEl.style.background = isDark
+        ? "linear-gradient(180deg,#071030 0%, #0b2a5a 100%)"
+        : "linear-gradient(180deg,#f6fbff 0%, #e6f0ff 100%)";
+      container.appendChild(fallbackEl);
+    } else {
+      try {
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: 'high-performance' });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        container.appendChild(renderer.domElement);
+      } catch (err) {
+        // WebGL failed at creation time — fall back to static background
+        console.warn("ThreeBackground: WebGL renderer creation failed:", err);
+        fallbackEl = document.createElement("div");
+        fallbackEl.style.width = "100%";
+        fallbackEl.style.height = "100%";
+        fallbackEl.style.background = isDark
+          ? "linear-gradient(180deg,#071030 0%, #0b2a5a 100%)"
+          : "linear-gradient(180deg,#f6fbff 0%, #e6f0ff 100%)";
+        container.appendChild(fallbackEl);
+      }
+    }
 
     const mouse = new THREE.Vector2(0, 0);
     const clock = new THREE.Clock();
@@ -80,6 +121,42 @@ export default function ThreeBackground({ isDark = true }: Props) {
 
     torusKnot.dispose();
 
+    // ── Mouse tracking ──
+    let targetMouseX = 0, targetMouseY = 0;
+    const handleMouseMove = (e: MouseEvent) => {
+      targetMouseX = (e.clientX / window.innerWidth) * 2 - 1;
+      targetMouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+    };
+
+    // ── Touch support ──
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        targetMouseX = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+        targetMouseY = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+      }
+    };
+
+    const handleResize = () => {
+      if (!container) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      if (renderer) {
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      }
+    };
+
+    if (!renderer) {
+      // no-op: return cleanup handler below will remove fallback
+      return () => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("touchmove", handleTouchMove);
+        window.removeEventListener("resize", handleResize);
+        if (fallbackEl && container.contains(fallbackEl)) {
+          container.removeChild(fallbackEl);
+        }
+      };
+    }
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -95,22 +172,9 @@ export default function ThreeBackground({ isDark = true }: Props) {
     const points = new THREE.Points(geometry, material);
     scene.add(points);
 
-    // ── Mouse tracking ──
-    let targetMouseX = 0, targetMouseY = 0;
-    const handleMouseMove = (e: MouseEvent) => {
-      targetMouseX = (e.clientX / window.innerWidth) * 2 - 1;
-      targetMouseY = -(e.clientY / window.innerHeight) * 2 + 1;
-    };
     window.addEventListener("mousemove", handleMouseMove, { passive: true });
-
-    // ── Touch support ──
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length > 0) {
-        targetMouseX = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
-        targetMouseY = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
-      }
-    };
     window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    window.addEventListener("resize", handleResize);
 
     let frameId: number;
 
@@ -174,16 +238,10 @@ export default function ThreeBackground({ isDark = true }: Props) {
       geometry.attributes.position.needsUpdate = true;
       points.rotation.y = elapsed * 0.04;
 
-      renderer.render(scene, camera);
+      if (renderer) renderer.render(scene, camera);
     };
     animate();
 
-    const handleResize = () => {
-      if (!container) return;
-      camera.aspect = container.clientWidth / container.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
-    };
     window.addEventListener("resize", handleResize);
 
     return () => {
@@ -191,11 +249,22 @@ export default function ThreeBackground({ isDark = true }: Props) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("touchmove", handleTouchMove);
       window.removeEventListener("resize", handleResize);
-      renderer.dispose();
-      geometry.dispose();
-      material.dispose();
-      if (container.contains(renderer.domElement)) {
+      if (renderer) {
+        try {
+          renderer.dispose();
+        } catch {}
+      }
+      try {
+        geometry.dispose();
+      } catch {}
+      try {
+        material.dispose();
+      } catch {}
+      if (renderer && renderer.domElement && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
+      }
+      if (fallbackEl && container.contains(fallbackEl)) {
+        container.removeChild(fallbackEl);
       }
     };
   }, [isDark]);

@@ -1,14 +1,12 @@
 """Vantage AI Agent — Groq LLM conversation engine (Fixed Loop Issue)."""
 
-import os
 import json
 import re
 from groq import Groq
-from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+from .config import GROQ_API_KEY, GROQ_LLM_MODEL
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+client = Groq(api_key=GROQ_API_KEY)
 
 _LANGUAGE_INSTRUCTIONS = {
     "en": "Always respond in English only. Do not mix Hindi or Marathi words in English mode.",
@@ -77,7 +75,7 @@ Remember: You are professional but friendly. Keep responses concise (1-2 sentenc
 
 
 # Prefer higher-consistency model for multilingual conversational quality.
-MODEL = "llama-3.3-70b-versatile"
+MODEL = GROQ_LLM_MODEL
 
 
 def run_agent(transcript: str, conversation_history: list[dict], language: str = "en") -> dict:

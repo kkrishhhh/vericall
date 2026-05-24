@@ -1,8 +1,9 @@
 import httpx
 import asyncio
 import json
+import os
 
-BASE_URL = "http://localhost:8001"
+BASE_URL = os.environ.get("TEST_BASE_URL", "http://localhost:8001")
 
 async def run_e2e_test():
     print("=======================================================")

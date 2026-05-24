@@ -1,7 +1,7 @@
 """Vantage AI Offer Engine — policy-based loan offer generation."""
 
 import math
-from models import CustomerData, FraudFlag
+from .models import CustomerData, FraudFlag
 
 
 def generate_offer(

@@ -6,7 +6,7 @@ import statistics
 import tempfile
 from typing import Any
 
-from age_verification import assess_age_against_claim
+from .age_verification import assess_age_against_claim
 
 try:
     from deepface import DeepFace as _DeepFace

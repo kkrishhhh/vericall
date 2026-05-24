@@ -14,12 +14,13 @@ Usage:
         ...
 """
 
-import os
 import time
 from enum import IntEnum
 from typing import Optional
 
 import jwt
+
+from .config import DEMO_USERS, JWT_ALGORITHM, JWT_EXPIRY_HOURS, JWT_SECRET
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -37,20 +38,38 @@ class Role(IntEnum):
 
 # ── JWT Config ───────────────────────────────────────────────────
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "vantage-demo-secret-key-2026")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 8
+# WARNING: JWT_SECRET must be configured in environment.
+# Demo credentials are optional and should be provided through DEMO_USERS_JSON.
+
+JWT_SECRET = JWT_SECRET
+JWT_ALGORITHM = JWT_ALGORITHM
+JWT_EXPIRY_HOURS = JWT_EXPIRY_HOURS
 
 _security = HTTPBearer(auto_error=False)
 
 
 # ── Demo Credentials ─────────────────────────────────────────────
 
-DEMO_USERS = {
-    "officer": {"password": "officer123", "role": Role.PFL_OFFICER, "name": "Officer Demo"},
-    "manager": {"password": "manager123", "role": Role.PFL_MANAGER, "name": "Manager Demo"},
-    "admin":   {"password": "admin123",   "role": Role.PFL_ADMIN,   "name": "Admin Demo"},
-}
+# Demo users can be configured via DEMO_USERS_JSON in the environment.
+# Example:
+# DEMO_USERS_JSON='{"officer": {"password": "officer123", "role": "PFL_OFFICER", "name": "Officer Demo"}}'
+
+RAW_DEMO_USERS = DEMO_USERS
+DEMO_USERS: dict[str, dict] = {}
+for user_name, info in RAW_DEMO_USERS.items():
+    role_value = info.get("role")
+    if isinstance(role_value, str) and role_value in Role.__members__:
+        role = Role[role_value]
+    elif isinstance(role_value, int):
+        role = Role(role_value)
+    else:
+        raise RuntimeError(f"Invalid role for demo user {user_name}: {role_value}")
+
+    DEMO_USERS[user_name.lower()] = {
+        "password": info.get("password", ""),
+        "role": role,
+        "name": info.get("name", "")
+    }
 
 
 # ── Models ───────────────────────────────────────────────────────

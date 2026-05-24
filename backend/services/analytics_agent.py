@@ -19,12 +19,13 @@ import threading
 from pathlib import Path
 
 from groq import Groq
+from ..config import GROQ_API_KEY, GROQ_LLM_MODEL as ANALYTICS_MODEL
 
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _DB_FILE = _DATA_DIR / "audit_sessions.db"
 _lock = threading.Lock()
 
-_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+_client = Groq(api_key=GROQ_API_KEY)
 
 # ── Schema for the LLM prompt ───────────────────────────────────
 
@@ -173,7 +174,7 @@ def ask_analytics(question: str) -> dict:
     # Step 1: Ask LLM to decide mode and respond
     try:
         response = _client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=ANALYTICS_MODEL,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": question},
@@ -243,7 +244,7 @@ def ask_analytics(question: str) -> dict:
 
     try:
         summary_response = _client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=ANALYTICS_MODEL,
             messages=[
                 {
                     "role": "system",

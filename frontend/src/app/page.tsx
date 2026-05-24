@@ -31,7 +31,7 @@ if (typeof window !== "undefined") {
 //  CONSTANTS
 // ═══════════════════════════════════════════════════════
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
 const CYCLING_WORDS = ["Instant.", "Seamless.", "Secure.", "Intelligent."];
 
@@ -140,11 +140,13 @@ function LandingPageContent() {
   const campaignId = searchParams.get("campaign_id") || "";
   const backendCandidates = uniqueUrls([
     BACKEND,
+    "http://127.0.0.1:8000",
     "http://127.0.0.1:8001",
   ]);
   const fetchBaseCandidates = uniqueUrls([
     "",
     BACKEND,
+    "http://127.0.0.1:8000",
     "http://127.0.0.1:8001",
   ]);
   const [, setActiveBackendUrl] = useState<string>(backendCandidates[0] || "http://127.0.0.1:8001");

@@ -23,18 +23,18 @@ data "aws_availability_zones" "available" {
 provider "random" {}
 
 locals {
-  service_name = "vantage-ai"
+  service_name = var.project_name
 }
 
 resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block = var.vpc_cidr
   tags = {
     Name = "${local.service_name}-vpc"
   }
 }
 
 resource "aws_subnet" "public" {
-  count                   = 2
+  count                   = var.public_subnet_count
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index)
   map_public_ip_on_launch = true
@@ -53,12 +53,12 @@ resource "aws_internet_gateway" "gateway" {
 
 resource "aws_security_group" "alb" {
   name        = "${local.service_name}-alb"
-  description = "Allow inbound HTTP to the application load balancer"
+  description = "Allow inbound traffic to the application load balancer"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port   = 80
-    to_port     = 80
+    from_port   = var.alb_port
+    to_port     = var.alb_port
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -77,8 +77,8 @@ resource "aws_security_group" "ecs" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port       = 8001
-    to_port         = 8001
+    from_port       = var.backend_port
+    to_port         = var.backend_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
@@ -127,7 +127,7 @@ resource "aws_lb" "app" {
 
 resource "aws_lb_target_group" "backend" {
   name     = "${local.service_name}-backend-tg"
-  port     = 8001
+  port     = var.backend_port
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
   health_check {
@@ -153,15 +153,15 @@ resource "aws_ecs_task_definition" "backend" {
   family                   = "${local.service_name}-backend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "512"
-  memory                   = "1024"
+  cpu                      = var.backend_cpu
+  memory                   = var.backend_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   container_definitions = jsonencode([
     {
       name      = "backend"
-      image     = "${aws_ecr_repository.backend.repository_url}:latest"
+      image     = "${aws_ecr_repository.backend.repository_url}:${var.backend_image_tag}"
       portMappings = [{
-        containerPort = 8001
+        containerPort = var.backend_port
         protocol      = "tcp"
       }]
       environment = [
@@ -176,7 +176,7 @@ resource "aws_ecs_service" "backend" {
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.backend.arn
   launch_type     = "FARGATE"
-  desired_count   = 1
+  desired_count   = var.backend_desired_count
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
@@ -185,14 +185,14 @@ resource "aws_ecs_service" "backend" {
   load_balancer {
     target_group_arn = aws_lb_target_group.backend.arn
     container_name   = "backend"
-    container_port   = 8001
+    container_port   = var.backend_port
   }
   depends_on = [aws_lb_listener.http]
 }
 
 resource "aws_s3_bucket" "frontend" {
   bucket = "${local.service_name}-frontend-${random_id.bucket_suffix.hex}"
-  acl    = "public-read"
+  acl    = var.frontend_bucket_acl
 
   website {
     index_document = "index.html"

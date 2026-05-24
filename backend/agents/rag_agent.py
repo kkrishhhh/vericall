@@ -18,17 +18,16 @@ Design notes:
 
 from __future__ import annotations
 
-import os
 import re
 import logging
 from typing import Any
 
+from ..config import CHROMA_EMBEDDING_MODEL, RBI_TEXT_PATH
+
 logger = logging.getLogger("vantage.rag")
 
 # Path to RBI KYC Master Direction text file
-_RBI_TEXT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "data", "rbi_kyc_master_direction_2016.txt"
-)
+_RBI_TEXT_PATH = RBI_TEXT_PATH
 
 
 class PolicyRAGAgent:
@@ -91,7 +90,7 @@ class PolicyRAGAgent:
         # Initialize ChromaDB with sentence-transformer embeddings
         try:
             embedding_fn = SentenceTransformerEmbeddingFunction(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
+                model_name=CHROMA_EMBEDDING_MODEL
             )
 
             client = chromadb.Client()  # In-memory client

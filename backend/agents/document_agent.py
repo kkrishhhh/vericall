@@ -23,14 +23,15 @@ AGENTIC RETRY LOOP:
 
 from __future__ import annotations
 
-import os
 import re
 import json
 import base64
 import httpx
 from typing import Any
 
-from agents.state import AgentState, RetryRequest
+from ..config import GROQ_API_KEY, VISION_MODEL as CONFIG_VISION_MODEL
+
+from .state import AgentState, RetryRequest
 
 
 # ── Groq Vision client (lazy init to avoid import-time failures) ──
@@ -38,13 +39,10 @@ from agents.state import AgentState, RetryRequest
 def _get_vision_client():
     """Lazy-initialize Groq client for Vision API calls."""
     from groq import Groq
-    return Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    return Groq(api_key=GROQ_API_KEY)
 
 
-VISION_MODEL = os.environ.get(
-    "GROQ_VISION_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-)
+VISION_MODEL = CONFIG_VISION_MODEL
 
 
 # ── Normalization helpers (shared with document_match.py logic) ───

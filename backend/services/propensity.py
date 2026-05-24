@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models import CustomerData
+from ..models import CustomerData
 
 
 def _clip(value: float, low: float, high: float) -> float:

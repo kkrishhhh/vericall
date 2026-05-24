@@ -33,23 +33,25 @@ import asyncio
 import logging
 from typing import Any
 
-from agents.state import (
+from ..config import GROQ_API_KEY, ORCHESTRATOR_MODEL as CONFIG_ORCHESTRATOR_MODEL
+
+from .state import (
     AgentState,
     Phase,
     UserAction,
     OrchestrateRequest,
     OrchestrateResponse,
 )
-from agents.event_bus import AgentEventBus
-from agents.interview_agent import run_interview_agent
-from agents.kyc_agent import run_kyc_agent
-from agents.document_agent import run_document_agent
-from agents.decision_agent import run_decision_agent
+from .event_bus import AgentEventBus
+from .interview_agent import run_interview_agent
+from .kyc_agent import run_kyc_agent
+from .document_agent import run_document_agent
+from .decision_agent import run_decision_agent
 
 logger = logging.getLogger("vantage.orchestrator")
 
 # Groq model for orchestrator reasoning and tool-calling
-ORCHESTRATOR_MODEL = "llama-3.3-70b-versatile"
+ORCHESTRATOR_MODEL = CONFIG_ORCHESTRATOR_MODEL
 
 # Maximum retries for Groq API rate limits
 MAX_GROQ_RETRIES = 3
@@ -192,7 +194,7 @@ class OrchestratorAgent:
         """Lazy-initialize the Groq client."""
         if self._groq_client is None:
             from groq import Groq
-            self._groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+            self._groq_client = Groq(api_key=GROQ_API_KEY)
         return self._groq_client
 
     async def orchestrate(self, request: OrchestrateRequest) -> OrchestrateResponse:

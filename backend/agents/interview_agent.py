@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agents.state import AgentState
+from .state import AgentState
 
 
 # ── Tool 1: calculate_preapproval ────────────────────────────────

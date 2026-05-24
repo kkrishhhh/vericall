@@ -5,9 +5,11 @@ import json
 from groq import Groq
 from dotenv import load_dotenv
 
+from .config import GROQ_API_KEY, GROQ_LLM_MODEL as CONFIG_MODEL
+
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+client = Groq(api_key=GROQ_API_KEY)
 
 _LANGUAGE_INSTRUCTIONS = {
     "en": "Always respond in English.",
@@ -46,7 +48,7 @@ Rules:
 - Fill in the actual values the customer provided in the JSON output."""
 
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = CONFIG_MODEL
 
 
 def run_agent(transcript: str, conversation_history: list[dict], language: str = "en") -> dict:

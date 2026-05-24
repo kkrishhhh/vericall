@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from models import CustomerData, FraudFlag
+    from ..models import CustomerData, FraudFlag
 
 
 def _flag_weight(severity: str) -> int:

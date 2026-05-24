@@ -3,7 +3,6 @@
 import os
 import time
 import logging
-import random
 import secrets
 import asyncio
 import smtplib
@@ -13,13 +12,41 @@ from fastapi import FastAPI, HTTPException, Depends
 from email.message import EmailMessage
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
+
+from .otp_manager import (
+    cleanup_expired_otps,
+    normalize_mobile,
+    request_otp as request_otp_code,
+    verify_otp as verify_otp_code,
+    OTPBlocked,
+    OTPExpired,
+    OTPInvalid,
+    OTPRequestRateLimited,
+    OTPError,
+)
+from .config import (
+    APP_HOST,
+    APP_PORT,
+    APP_RELOAD,
+    BREVO_PASS,
+    BREVO_SMTP_HOST,
+    BREVO_SMTP_PORT,
+    BREVO_SENDER_EMAIL,
+    BREVO_SENDER_NAME,
+    BREVO_USER,
+    DEV_EXPOSE_KYC_OTP,
+    FRONTEND_BASE_URL,
+    KYC_LINK_VALIDITY_HOURS,
+    OTP_VALIDITY_MINUTES,
+    DEEPGRAM_API_KEY,
+    DEEPGRAM_ALLOW_BROWSER_KEY,
+)
 
 # Multi-agent orchestration layer
-from agents.orchestrator import OrchestratorAgent
-from agents.state import OrchestrateRequest, OrchestrateResponse
+from .agents.orchestrator import OrchestratorAgent
+from .agents.state import OrchestrateRequest, OrchestrateResponse
 
-from models import (
+from .models import (
     AgentRequest, AgentResponse,
     FaceAnalysisRequest, FaceAnalysisResponse,
     RiskAssessmentRequest, RiskAssessmentResponse,
@@ -36,42 +63,39 @@ from models import (
     KycReviewPdfRequest,
     DecisionRequest, DecisionResponse,
 )
-from agent import run_agent
-from vision import analyze_face
-from fraud import assess_risk
-from offer import generate_offer
-from session_log import append_session_record, read_recent_sessions, read_session_by_id
-from extraction import extract_profile_from_text
-from services.document_match import verify_address_match, verify_kyc_documents
-from services.document_builder import build_document_pack
-from services.document_templates import render_application_form_html
-from services.document_pdf import render_application_form_pdf, render_kyc_review_pdf
-from services.journey_core import (
+from .agent import run_agent
+from .vision import analyze_face
+from .fraud import assess_risk
+from .offer import generate_offer
+from .session_log import append_session_record, read_recent_sessions, read_session_by_id
+from .extraction import extract_profile_from_text
+from .services.document_match import verify_address_match, verify_kyc_documents
+from .services.document_builder import build_document_pack
+from .services.document_templates import render_application_form_html
+from .services.document_pdf import render_application_form_pdf, render_kyc_review_pdf
+from .services.journey_core import (
     compute_preapproval,
     verify_kyc,
     evaluate_decision,
 )
-from services.consent_manager import (
+from .services.consent_manager import (
     ConsentRecord, RecordConsentRequest,
     store_consent, get_consent_by_session,
 )
-from services.human_review_queue import (
+from .services.human_review_queue import (
     HumanReviewItem, EscalateRequest, ResolveRequest,
     escalate_to_review, get_review_queue, resolve_review,
     check_and_escalate, ESCALATION_TRIGGERS,
 )
-from rbac import (
+from .rbac import (
     Role, LoginRequest, LoginResponse,
     authenticate_user, require_role, get_current_user,
 )
-from services.analytics import (
+from .services.analytics import (
     get_overview_stats, get_fraud_stats,
     get_regional_breakdown, get_ai_performance_metrics,
 )
 
-
-# Load env from project root
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 app = FastAPI(
     title="Vantage AI API",
@@ -82,9 +106,9 @@ app = FastAPI(
 # CORS — allow frontend connections
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to frontend URL
+    allow_origins=[FRONTEND_BASE_URL],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -213,8 +237,17 @@ async def create_room():
 
 @app.get("/api/deepgram-token")
 async def deepgram_token():
-    """Return the Deepgram API key for browser STT (used in WebSocket subprotocol, not query string)."""
-    key = (os.environ.get("DEEPGRAM_API_KEY") or "").strip()
+    """Return the Deepgram API key for browser STT when explicitly allowed in development."""
+    if not DEEPGRAM_ALLOW_BROWSER_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Deepgram browser token access is disabled. "
+                "Enable DEEPGRAM_ALLOW_BROWSER_KEY only for local development or use a server-side STT proxy."
+            ),
+        )
+
+    key = (DEEPGRAM_API_KEY or "").strip()
     if not key:
         raise HTTPException(status_code=500, detail="Deepgram API key not configured")
     return {"token": key}
@@ -355,7 +388,6 @@ async def extract_endpoint(req: ExtractRequest):
 
 # ── 9. Simulated OTP ────────────────────────────────────────
 
-otp_store = {}
 video_kyc_link_store: dict[str, dict] = {}
 
 
@@ -369,60 +401,39 @@ def _cleanup_video_kyc_links() -> None:
         video_kyc_link_store.pop(token, None)
 
 
-def _normalized_mobile(mobile_number: str) -> str:
-    digits = "".join(ch for ch in mobile_number if ch.isdigit())
-    if len(digits) == 10:
-        return f"+91{digits}"
-    if len(digits) == 12 and digits.startswith("91"):
-        return f"+{digits}"
-    if mobile_number.startswith("+"):
-        return mobile_number
-    return f"+{digits}" if digits else mobile_number
-
 @app.post("/api/send-otp")
 async def send_otp(req: SendOTPRequest):
-    """Simulate sending an OTP to a mobile number."""
+    """Send an OTP to a mobile number."""
+    cleanup_expired_otps()
     try:
-        import random
-        import time
-        
-        otp = str(random.randint(100000, 999999))
-        otp_store[req.mobile_number] = {
-            "otp": otp,
-            "expires_at": time.time() + 300
-        }
-        
-        print()
-        print("=" * 50)
-        print(f"[MOCK SMS SUCCESS] Sent to {req.mobile_number}:")
-        print(f"   Your Aadhaar/PAN Verification OTP is {otp}")
-        print("=" * 50)
-        print()
-        
-        return {"status": "success", "message": "OTP sent to mobile number"}
-    except Exception as e:
-        import traceback
-        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+        debug_otp = await request_otp_code(req.mobile_number)
+        response = {"status": "success", "message": "OTP request accepted"}
+        if debug_otp:
+            response["debug_otp"] = debug_otp
+        return response
+    except OTPRequestRateLimited as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    except OTPError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"OTP send failed: {exc}")
 
 
 @app.post("/api/verify-otp")
 async def verify_otp(req: VerifyOTPRequest):
-    """Verify the simulated OTP."""
-    import time
-    
-    record = otp_store.get(req.mobile_number)
-    
-    if not record:
-        raise HTTPException(status_code=400, detail="No OTP requested for this number")
-        
-    if time.time() > record["expires_at"]:
-        raise HTTPException(status_code=400, detail="OTP expired")
-        
-    if record["otp"] == req.otp:
-        del otp_store[req.mobile_number]
+    """Verify an OTP sent to a mobile number."""
+    cleanup_expired_otps()
+    try:
+        await verify_otp_code(req.mobile_number, req.otp)
         return {"status": "success", "message": "KYC Verified Successfully"}
-        
-    raise HTTPException(status_code=400, detail="Invalid OTP")
+    except OTPBlocked as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    except (OTPExpired, OTPInvalid) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OTPError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"OTP verification failed: {exc}")
 
 
 @app.post("/api/video-kyc/request")
@@ -433,18 +444,19 @@ async def request_video_kyc_link(req: VideoKycRequestCreate):
     if not req.consent_accepted:
         raise HTTPException(status_code=400, detail="Consent is required before requesting Video KYC")
 
-    smtp_user = (os.environ.get("BREVO_USER") or os.environ.get("BREVO_SMTP_USER") or "").strip()
-    smtp_pass = (os.environ.get("BREVO_PASS") or os.environ.get("BREVO_SMTP_PASS") or "").strip()
-    if not smtp_user or not smtp_pass:
+    smtp_user = (BREVO_USER or "").strip()
+    smtp_pass = (BREVO_PASS or "").strip()
+    email_delivery_available = bool(smtp_user and smtp_pass)
+    if not email_delivery_available and not DEV_EXPOSE_KYC_OTP:
         raise HTTPException(
             status_code=500,
             detail="Brevo SMTP credentials are not configured (set BREVO_USER and BREVO_PASS)",
         )
 
-    sender_email = (os.environ.get("BREVO_SENDER_EMAIL") or smtp_user).strip()
+    sender_email = (BREVO_SENDER_EMAIL or smtp_user or "").strip()
     if not sender_email:
         raise HTTPException(status_code=500, detail="Brevo sender email is not configured")
-    sender_name = (os.environ.get("BREVO_SENDER_NAME") or "Vantage team").strip()
+    sender_name = (BREVO_SENDER_NAME or "").strip() or "Vantage team"
 
     token = secrets.token_urlsafe(24)
     otp = f"{random.randint(100000, 999999)}"
@@ -452,7 +464,7 @@ async def request_video_kyc_link(req: VideoKycRequestCreate):
     otp_expires_at = now + (10 * 60)
     link_expires_at = now + (24 * 60 * 60)
 
-    frontend_base = (os.environ.get("FRONTEND_BASE_URL") or "http://localhost:3000").rstrip("/")
+    frontend_base = FRONTEND_BASE_URL.rstrip("/")
     params = [f"kyc_token={token}", f"lang={req.language or 'en'}"]
     if req.campaign_id:
         params.append(f"campaign_id={req.campaign_id}")
@@ -496,8 +508,8 @@ async def request_video_kyc_link(req: VideoKycRequestCreate):
     message.set_content(email_text)
     message.add_alternative(email_html, subtype="html")
 
-    smtp_host = (os.environ.get("BREVO_SMTP_HOST") or "smtp-relay.brevo.com").strip()
-    smtp_port = int((os.environ.get("BREVO_SMTP_PORT") or "587").strip())
+    smtp_host = (BREVO_SMTP_HOST or "").strip()
+    smtp_port = BREVO_SMTP_PORT or 0
 
     def _send_via_smtp() -> None:
         context = ssl.create_default_context()
@@ -521,15 +533,20 @@ async def request_video_kyc_link(req: VideoKycRequestCreate):
         if last_error:
             raise last_error
 
-    try:
-        await asyncio.to_thread(_send_via_smtp)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Brevo SMTP send failed: {str(e)}")
+    if email_delivery_available:
+        try:
+            await asyncio.to_thread(_send_via_smtp)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Brevo SMTP send failed: {str(e)}")
+    else:
+        logging.getLogger(__name__).warning(
+            "DEV_EXPOSE_KYC_OTP enabled and Brevo SMTP credentials not configured. Skipping email delivery.",
+        )
 
     video_kyc_link_store[token] = {
         "full_name": req.full_name,
         "email": req.email,
-        "mobile_number": _normalized_mobile(req.mobile_number),
+        "mobile_number": normalize_mobile(req.mobile_number),
         "language": req.language or "en",
         "campaign_id": req.campaign_id,
         "otp": otp,
@@ -537,27 +554,24 @@ async def request_video_kyc_link(req: VideoKycRequestCreate):
         "link_expires_at": link_expires_at,
         "created_at": now,
         "otp_verified": False,
+        "failed_attempts": 0,
+        "lockout_until": 0,
     }
 
-    # Local/dev convenience: surface OTP + link when email delivery is delayed.
-    dev_expose = (os.environ.get("DEV_EXPOSE_KYC_OTP") or "true").strip().lower() in {"1", "true", "yes", "on"}
-    if dev_expose:
-        print()
-        print("=" * 64)
-        print("[VIDEO KYC DEV PREVIEW]")
-        print(f"Recipient: {req.email}")
-        print(f"Link: {kyc_link}")
-        print(f"OTP: {otp}")
-        print("=" * 64)
-        print()
+    if DEV_EXPOSE_KYC_OTP:
+        logging.getLogger(__name__).info(
+            "Video KYC dev preview enabled for %s; link=%s",
+            req.email,
+            kyc_link,
+        )
 
     response = {
         "status": "success",
         "message": "Video KYC link sent to customer email",
-        "link_valid_for_hours": 24,
-        "otp_valid_for_minutes": 10,
+        "link_valid_for_hours": KYC_LINK_VALIDITY_HOURS,
+        "otp_valid_for_minutes": OTP_VALIDITY_MINUTES,
     }
-    if dev_expose:
+    if DEV_EXPOSE_KYC_OTP:
         response["dev_preview"] = {
             "recipient": req.email,
             "kyc_link": kyc_link,
@@ -583,7 +597,22 @@ async def verify_video_kyc_otp(req: VideoKycOtpVerifyRequest):
     if now > float(record.get("otp_expires_at", 0)):
         raise HTTPException(status_code=400, detail="OTP expired")
 
+    lockout_until = float(record.get("lockout_until", 0))
+    if now < lockout_until:
+        raise HTTPException(
+            status_code=429,
+            detail="OTP attempts blocked due to repeated invalid attempts. Try again later.",
+        )
+
     if record.get("otp") != req.otp:
+        record["failed_attempts"] = int(record.get("failed_attempts", 0)) + 1
+        if record["failed_attempts"] >= 5:
+            record["lockout_until"] = now + (15 * 60)
+            raise HTTPException(
+                status_code=429,
+                detail="Too many invalid OTP attempts. Try again later.",
+            )
+        video_kyc_link_store[req.token] = record
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     record["otp_verified"] = True
@@ -818,7 +847,7 @@ async def analytics_ai_performance(days: int = 7, _user: dict = Depends(require_
 
 # ── 16. Conversational Analytics Agent ───────────────────────────
 
-from services.analytics_agent import ask_analytics
+from .services.analytics_agent import ask_analytics
 from pydantic import BaseModel as _BaseModel
 
 class AnalyticsAskRequest(_BaseModel):
@@ -835,7 +864,7 @@ async def analytics_ask(req: AnalyticsAskRequest, _user: dict = Depends(require_
 
 # ── 17. Verification Registry ────────────────────────────────────
 
-from services.verification_registry import run_all_verifications
+from .services.verification_registry import run_all_verifications
 
 class VerifyRegistryRequest(_BaseModel):
     aadhaar_number: str | None = None
@@ -863,7 +892,7 @@ async def verify_registry(req: VerifyRegistryRequest):
 
 # ── 18. Document Forensics Endpoint ─────────────────────────────
 
-from services.document_match import check_document_forensics
+from .services.document_match import check_document_forensics
 
 class ForensicsRequest(_BaseModel):
     image_b64: str
@@ -878,4 +907,4 @@ async def document_forensics_endpoint(req: ForensicsRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("main:app", host=APP_HOST, port=APP_PORT, reload=APP_RELOAD)

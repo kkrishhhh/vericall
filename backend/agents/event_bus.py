@@ -13,7 +13,7 @@ import asyncio
 import logging
 from typing import Any, Callable, Coroutine
 
-from agents.state import AgentState
+from .state import AgentState
 
 logger = logging.getLogger("vantage.event_bus")
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 
-from models import CustomerData
+from ..models import CustomerData
 
 
 def _stable_bucket(text: str, mod: int) -> int:

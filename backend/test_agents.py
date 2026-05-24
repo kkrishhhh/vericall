@@ -11,7 +11,7 @@ def test_rag():
     print("=" * 60)
     print("TEST: PolicyRAGAgent")
     print("=" * 60)
-    from agents.rag_agent import PolicyRAGAgent
+    from .agents.rag_agent import PolicyRAGAgent
     rag = PolicyRAGAgent.get_instance()
     results = rag.query("Aadhaar verification KYC requirements", top_k=2)
     print(f"  Results: {len(results)} citations")
@@ -25,7 +25,7 @@ def test_orchestrator_import():
     print("=" * 60)
     print("TEST: OrchestratorAgent import")
     print("=" * 60)
-    from agents.orchestrator import OrchestratorAgent
+    from .agents.orchestrator import OrchestratorAgent
     orch = OrchestratorAgent()
     print(f"  OrchestratorAgent created: {type(orch).__name__}")
     print()
@@ -34,8 +34,8 @@ async def test_full_interview():
     print("=" * 60)
     print("TEST: Full Interview Flow")
     print("=" * 60)
-    from agents.state import AgentState, OrchestrateRequest, UserAction
-    from agents.orchestrator import OrchestratorAgent
+    from .agents.state import AgentState, OrchestrateRequest, UserAction
+    from .agents.orchestrator import OrchestratorAgent
 
     orch = OrchestratorAgent()
 
@@ -69,8 +69,8 @@ async def test_full_kyc():
     print("=" * 60)
     print("TEST: KYC Flow (with pre-set state)")
     print("=" * 60)
-    from agents.state import AgentState, Phase, OrchestrateRequest, UserAction
-    from agents.orchestrator import OrchestratorAgent
+    from .agents.state import AgentState, Phase, OrchestrateRequest, UserAction
+    from .agents.orchestrator import OrchestratorAgent
 
     orch = OrchestratorAgent()
 

@@ -22,7 +22,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
-from agents.state import AgentState
+from .state import AgentState
 
 
 # ── Verhoeff tables (identical to document_match.py) ─────────────

@@ -1,22 +1,17 @@
 """Second-pass LLM extraction: messy transcript → structured customer profile."""
 
 import json
-import os
 import re
 
 from groq import Groq
-from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+from .config import EXTRACTION_MODEL, GROQ_API_KEY
 
-_MODEL = "llama-3.3-70b-versatile"
+_MODEL = EXTRACTION_MODEL
 
 
 def _client() -> Groq:
-    key = os.environ.get("GROQ_API_KEY")
-    if not key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-    return Groq(api_key=key)
+    return Groq(api_key=GROQ_API_KEY)
 
 _EXTRACTION_PROMPT = """You normalize loan onboarding data from a messy transcript (speech-to-text errors, Hindi-English mix, fillers).
 

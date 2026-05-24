@@ -1,6 +1,5 @@
 """Vantage AI Document Matcher Phase — Groq Vision Agent."""
 
-import os
 import re
 import json
 import base64
@@ -8,12 +7,11 @@ from difflib import SequenceMatcher
 import httpx
 from groq import Groq
 
+from ..config import GROQ_API_KEY, VISION_MODEL as CONFIG_VISION_MODEL
+
 # Reuse Groq API Key
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-VISION_MODEL = os.environ.get(
-    "GROQ_VISION_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-)
+client = Groq(api_key=GROQ_API_KEY)
+VISION_MODEL = CONFIG_VISION_MODEL
 
 _PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 _AADHAAR_RE = re.compile(r"^[0-9]{12}$")

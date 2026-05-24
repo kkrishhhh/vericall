@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from security_utils import hash_pii_fields
+from .security_utils import hash_pii_fields
 
 _lock = threading.Lock()
 

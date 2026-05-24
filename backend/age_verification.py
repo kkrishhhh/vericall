@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models import FraudFlag
+from .models import FraudFlag
 
 
 def assess_age_against_claim(

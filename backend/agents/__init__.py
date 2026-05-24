@@ -12,13 +12,13 @@ Architecture:
     └── PolicyRAGAgent    — ChromaDB + MiniLM-L6-v2 for RBI compliance
 """
 
-from agents.state import (
+from .state import (
     AgentState,
     OrchestrateRequest,
     OrchestrateResponse,
     AuditEntry,
 )
-from agents.orchestrator import OrchestratorAgent
+from .orchestrator import OrchestratorAgent
 
 __all__ = [
     "AgentState",
