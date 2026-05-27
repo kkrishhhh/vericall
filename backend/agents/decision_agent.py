@@ -261,6 +261,7 @@ async def run_decision_agent(state: AgentState, payload: dict[str, Any]) -> Agen
             age=profile.declared_age,
         )
         risk.bureau_score = bureau_result["bureau_score"]
+        risk.bureau_provider = str(bureau_result.get("provider", "mock_bureau_v1"))
         risk.bureau_band = bureau_result["score_band"]
         state.log_audit(
             agent="DecisionAgent",
@@ -338,6 +339,11 @@ async def run_decision_agent(state: AgentState, payload: dict[str, Any]) -> Agen
             offer.tenure_options = offer_result.get("tenure_options", tenure_opts)
             offer.monthly_emi = offer_result["monthly_emi"]
             offer.processing_fee = offer_result["processing_fee"]
+            if offer.status == "PRE-APPROVED" and risk.bureau_provider.startswith("mock_"):
+                offer.status = "NEEDS_REVIEW"
+                offer.decision_reasons.append(
+                    "Mock bureau provider detected — pre-approval requires manual review."
+                )
 
         state.log_audit(
             agent="DecisionAgent",

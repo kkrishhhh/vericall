@@ -4,6 +4,7 @@ import os
 import re
 import json
 import base64
+import tempfile
 from difflib import SequenceMatcher
 import httpx
 from groq import Groq
@@ -210,7 +211,43 @@ _VERHOEFF_P = [
 
 
 def _clean_b64(image_b64: str) -> str:
-    return image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+    if not isinstance(image_b64, str):
+        return ""
+    if "," in image_b64:
+        image_b64 = image_b64.split(",", 1)[1]
+    return "".join(image_b64.strip().split())
+
+
+def _write_temp_image(image_b64: str) -> str:
+    cleaned = _clean_b64(image_b64)
+    image_bytes = base64.b64decode(cleaned)
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(image_bytes)
+        return tmp.name
+
+
+def _deepface_verify_b64(img1_b64: str, img2_b64: str, **kwargs) -> dict:
+    try:
+        from deepface import DeepFace  # type: ignore
+    except Exception as e:
+        raise RuntimeError("DeepFace unavailable") from e
+
+    img1_path = _write_temp_image(img1_b64)
+    img2_path = _write_temp_image(img2_b64)
+    try:
+        return DeepFace.verify(
+            img1_path=img1_path,
+            img2_path=img2_path,
+            detector_backend="retinaface",
+            silent=True,
+            **kwargs,
+        )
+    finally:
+        for path in (img1_path, img2_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 def _extract_face_crop(image_b64: str) -> str | None:
@@ -490,11 +527,9 @@ Use null for unknown fields."""
         face_verified = False
         if selfie_b64 and aadhaar_photo_base64:
             try:
-                from deepface import DeepFace  # type: ignore
-
-                compare = DeepFace.verify(
-                    img1_path=aadhaar_photo_base64,
-                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                compare = _deepface_verify_b64(
+                    aadhaar_photo_base64,
+                    selfie_b64,
                     enforce_detection=False,
                 )
                 distance = compare.get("distance")
@@ -507,11 +542,9 @@ Use null for unknown fields."""
 
         if selfie_b64 and pan_photo_base64:
             try:
-                from deepface import DeepFace  # type: ignore
-
-                compare = DeepFace.verify(
-                    img1_path=pan_photo_base64,
-                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                compare = _deepface_verify_b64(
+                    pan_photo_base64,
+                    selfie_b64,
                     enforce_detection=False,
                 )
                 distance = compare.get("distance")
@@ -697,11 +730,9 @@ Use null for unknown fields."""
         selfie_match: bool | None = None
         if selfie_b64 and aadhaar_photo_base64:
             try:
-                from deepface import DeepFace  # type: ignore
-
-                compare = DeepFace.verify(
-                    img1_path=aadhaar_photo_base64,
-                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                compare = _deepface_verify_b64(
+                    aadhaar_photo_base64,
+                    selfie_b64,
                     enforce_detection=False,
                 )
                 distance = compare.get("distance")
@@ -715,11 +746,9 @@ Use null for unknown fields."""
 
         if selfie_match_score is None and selfie_b64 and pan_photo_base64:
             try:
-                from deepface import DeepFace  # type: ignore
-
-                compare = DeepFace.verify(
-                    img1_path=pan_photo_base64,
-                    img2_path=f"data:image/jpeg;base64,{selfie_b64}",
+                compare = _deepface_verify_b64(
+                    pan_photo_base64,
+                    selfie_b64,
                     enforce_detection=False,
                 )
                 distance = compare.get("distance")

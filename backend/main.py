@@ -9,11 +9,15 @@ import asyncio
 import smtplib
 import ssl
 import httpx
-from fastapi import FastAPI, HTTPException, Depends
+from collections import deque, defaultdict
+from fastapi import FastAPI, HTTPException, Depends, Request
 from email.message import EmailMessage
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+# Load env from project root before importing internal modules that may depend on secrets.
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # Multi-agent orchestration layer
 from agents.orchestrator import OrchestratorAgent
@@ -34,10 +38,11 @@ from models import (
     KycVerifyRequest, KycVerifyResponse,
     KycDocumentsVerifyRequest, KycDocumentsVerifyResponse,
     KycReviewPdfRequest,
+    LivenessChallengeResponse, LivenessVerifyRequest, LivenessVerifyResponse,
     DecisionRequest, DecisionResponse,
 )
 from agent import run_agent
-from vision import analyze_face
+from vision import analyze_face, generate_liveness_challenge, verify_liveness_challenge
 from fraud import assess_risk
 from offer import generate_offer
 from session_log import append_session_record, read_recent_sessions, read_session_by_id
@@ -70,8 +75,34 @@ from services.analytics import (
 )
 
 
-# Load env from project root
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+def _parse_frontend_origins() -> list[str]:
+    raw_frontend_url = (os.environ.get("FRONTEND_BASE_URL") or "").strip()
+    return [origin.rstrip("/") for origin in raw_frontend_url.split(",") if origin.strip()]
+
+
+def _validate_required_env_vars() -> None:
+    required_vars = [
+        "FRONTEND_BASE_URL",
+        "JWT_SECRET",
+        "DAILY_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "GROQ_API_KEY",
+    ]
+    missing = [name for name in required_vars if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables: " + ", ".join(missing) +
+            ". Please set these before starting the backend."
+        )
+
+
+_validate_required_env_vars()
+FRONTEND_ALLOWED_ORIGINS = _parse_frontend_origins()
+if not FRONTEND_ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "FRONTEND_BASE_URL must be configured as a valid origin, e.g. http://localhost:3000"
+    )
+
 
 app = FastAPI(
     title="Vantage AI API",
@@ -82,11 +113,41 @@ app = FastAPI(
 # CORS — allow frontend connections
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to frontend URL
+    allow_origins=FRONTEND_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_REQUESTS_PER_WINDOW = int(os.environ.get("RATE_LIMIT_REQUESTS_PER_MINUTE", "60"))
+_rate_limit_store: dict[str, deque[float]] = defaultdict(deque)
+_liveness_challenges: dict[str, dict[str, str]] = {}
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        client_ip = _get_client_ip(request)
+        now = time.time()
+        timestamps = _rate_limit_store[client_ip]
+        while timestamps and timestamps[0] <= now - RATE_LIMIT_WINDOW_SECONDS:
+            timestamps.popleft()
+        if len(timestamps) >= RATE_LIMIT_REQUESTS_PER_WINDOW:
+            return JSONResponse(
+                {"detail": "Rate limit exceeded. Try again later."},
+                status_code=429,
+                headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
+            )
+        timestamps.append(now)
+    return await call_next(request)
 
 
 @app.get("/")
@@ -136,6 +197,36 @@ async def face_analysis_endpoint(req: FaceAnalysisRequest):
         return FaceAnalysisResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vision error: {str(e)}")
+
+
+@app.post("/api/liveness/challenge", response_model=LivenessChallengeResponse)
+async def liveness_challenge_endpoint():
+    """Create a random live gesture challenge for the caller."""
+    challenge = generate_liveness_challenge()
+    _liveness_challenges[challenge["challenge_token"]] = {
+        "challenge": challenge["challenge"],
+        "created_at": str(time.time()),
+    }
+    return LivenessChallengeResponse(**challenge)
+
+
+@app.post("/api/liveness/verify", response_model=LivenessVerifyResponse)
+async def liveness_verify_endpoint(req: LivenessVerifyRequest):
+    """Verify live frames against an issued challenge token."""
+    token_data = _liveness_challenges.get(req.challenge_token)
+    if not token_data:
+        raise HTTPException(status_code=400, detail="Invalid or expired liveness challenge token.")
+
+    try:
+        result = verify_liveness_challenge(req.images)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("reason", "Liveness verification failed."))
+        _liveness_challenges.pop(req.challenge_token, None)
+        return LivenessVerifyResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Liveness verification error: {str(e)}")
 
 
 # ── 3. Risk Assessment Endpoint ──────────────────────────────
@@ -212,8 +303,12 @@ async def create_room():
 # ── 6. Deepgram Token Proxy ──────────────────────────────────
 
 @app.get("/api/deepgram-token")
-async def deepgram_token():
-    """Return the Deepgram API key for browser STT (used in WebSocket subprotocol, not query string)."""
+async def deepgram_token(request: Request):
+    """Proxy Deepgram auth token for browser STT only to the trusted frontend origin."""
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if origin not in FRONTEND_ALLOWED_ORIGINS:
+        raise HTTPException(status_code=403, detail="Forbidden origin for Deepgram token request")
+
     key = (os.environ.get("DEEPGRAM_API_KEY") or "").strip()
     if not key:
         raise HTTPException(status_code=500, detail="Deepgram API key not configured")

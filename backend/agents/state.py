@@ -91,6 +91,7 @@ class DocumentResults(BaseModel):
 class RiskAssessment(BaseModel):
     """Risk assessment — populated by DecisionAgent."""
     bureau_score: int = 0
+    bureau_provider: str = ""
     bureau_band: str = ""
     risk_band: str = "MEDIUM"
     risk_score: int = 50
@@ -166,6 +167,14 @@ class RetryRequest(BaseModel):
     )
 
 
+class ConversationState(BaseModel):
+    """Derived interview state used to track missing answers and next question."""
+    questions_asked: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    next_question: str = ""
+    last_updated: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 # ── Main AgentState ──────────────────────────────────────────────
 
 class AgentState(BaseModel):
@@ -190,6 +199,7 @@ class AgentState(BaseModel):
     # V-CIP compliance
     consent_recorded: bool = False
     geo_tag: GeoTag = Field(default_factory=GeoTag)
+    conversation_state: ConversationState = Field(default_factory=ConversationState)
 
     # Phase management
     current_phase: Phase = Phase.INTERVIEW

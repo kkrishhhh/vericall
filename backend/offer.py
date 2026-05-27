@@ -33,6 +33,9 @@ def generate_offer(
     else:
         status = "PRE-APPROVED"
 
+    if status == "PRE-APPROVED" and str(bureau.get("provider", "")).startswith("mock_"):
+        status = "NEEDS_REVIEW"
+
     if customer.income < 15000:
         status = "DECLINED"
 

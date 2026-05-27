@@ -17,12 +17,20 @@ Design notes:
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import os
 import re
+import tempfile
 from difflib import SequenceMatcher
 from typing import Any
 
 from agents.state import AgentState
+
+try:
+    from deepface import DeepFace as _DeepFace
+except Exception:
+    _DeepFace = None
 
 
 # ── Verhoeff tables (identical to document_match.py) ─────────────
@@ -126,15 +134,17 @@ def verhoeff_checksum(number: str) -> dict[str, Any]:
 
 # ── Tool 3: face_match ──────────────────────────────────────────
 
+def _write_temp_image(image_base64: str) -> str:
+    if "," in image_base64:
+        image_base64 = image_base64.split(",", 1)[1]
+    image_bytes = base64.b64decode(image_base64)
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(image_bytes)
+        return tmp.name
+
+
 def face_match(selfie_b64: str, aadhaar_photo_b64: str) -> dict[str, Any]:
-    """Compare selfie against Aadhaar photo for identity verification.
-
-    This is a simulated match using deterministic hashing for demo
-    reproducibility. In production, wire this to a real biometric
-    SDK (e.g., AWS Rekognition, Azure Face, or local InsightFace).
-
-    Per RBI V-CIP: live photo must be matched against OVD photo.
-    """
+    """Compare selfie against Aadhaar photo for identity verification."""
     selfie_ok = isinstance(selfie_b64, str) and len(selfie_b64) > 100
     aadhaar_ok = isinstance(aadhaar_photo_b64, str) and len(aadhaar_photo_b64) > 100
 
@@ -142,28 +152,62 @@ def face_match(selfie_b64: str, aadhaar_photo_b64: str) -> dict[str, Any]:
         return {
             "match": False,
             "score": 0.0,
-            "reason": "Selfie image is empty or too small",
+            "reason": "Selfie image is empty or too small.",
         }
 
     if not aadhaar_ok:
         return {
             "match": False,
             "score": 0.0,
-            "reason": "Aadhaar photo is empty or too small (could not extract face from card)",
+            "reason": "Aadhaar photo is empty or too small (could not extract face from card).",
         }
 
-    # Deterministic simulated match score
-    combined = f"{len(selfie_b64)}|{len(aadhaar_photo_b64)}|{selfie_b64[:20]}|{aadhaar_photo_b64[:20]}"
-    hashed = int(hashlib.sha256(combined.encode()).hexdigest()[:8], 16)
-    score = round(0.55 + (hashed % 41) / 100, 2)  # Range: 0.55–0.95
-    threshold = 0.65
+    if _DeepFace is None:
+        return {
+            "match": False,
+            "score": 0.0,
+            "reason": "DeepFace is unavailable in the runtime environment.",
+        }
 
-    return {
-        "match": score >= threshold,
-        "score": score,
-        "threshold": threshold,
-        "reason": f"Face match score {score:.2f} {'≥' if score >= threshold else '<'} threshold {threshold}",
-    }
+    selfie_path = _write_temp_image(selfie_b64)
+    aadhaar_path = _write_temp_image(aadhaar_photo_b64)
+    try:
+        result = _DeepFace.verify(
+            img1_path=selfie_path,
+            img2_path=aadhaar_path,
+            detector_backend="retinaface",
+            enforce_detection=False,
+            silent=True,
+        )
+        verified = bool(result.get("verified", False))
+        distance = float(result.get("distance", 1.0))
+        score = round(max(0.0, min(1.0, 1.0 - distance)), 2)
+        threshold = 0.65
+        reason = (
+            f"Face verified with score {score:.2f} "
+            f"({'verified' if verified else 'not verified'}) against threshold {threshold}."
+        )
+        return {
+            "match": verified,
+            "score": score,
+            "threshold": threshold,
+            "reason": reason,
+        }
+    except Exception as e:
+        return {
+            "match": False,
+            "score": 0.0,
+            "reason": f"Face verification failed: {str(e)}",
+        }
+    finally:
+        try:
+            os.unlink(selfie_path)
+        except OSError:
+            pass
+        try:
+            os.unlink(aadhaar_path)
+        except OSError:
+            pass
 
 
 # ── Tool 4: check_sanctions_list ─────────────────────────────────

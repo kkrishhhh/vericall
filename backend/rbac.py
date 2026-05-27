@@ -3,10 +3,7 @@
 Roles (ordered by privilege):
     CUSTOMER < PFL_OFFICER < PFL_MANAGER < PFL_ADMIN
 
-Demo credentials (hardcoded for hackathon):
-    officer  / officer123  → PFL_OFFICER
-    manager  / manager123  → PFL_MANAGER
-    admin    / admin123    → PFL_ADMIN
+Demo credentials are loaded from environment variables when configured.
 
 Usage:
     @app.get("/api/protected", dependencies=[Depends(require_role(Role.PFL_OFFICER))])
@@ -20,7 +17,7 @@ from enum import IntEnum
 from typing import Optional
 
 import jwt
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -37,20 +34,38 @@ class Role(IntEnum):
 
 # ── JWT Config ───────────────────────────────────────────────────
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "vantage-demo-secret-key-2026")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 8
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET must be configured in the environment")
+
+JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+try:
+    JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "8"))
+except ValueError:
+    JWT_EXPIRY_HOURS = 8
 
 _security = HTTPBearer(auto_error=False)
 
 
 # ── Demo Credentials ─────────────────────────────────────────────
 
-DEMO_USERS = {
-    "officer": {"password": "officer123", "role": Role.PFL_OFFICER, "name": "Officer Demo"},
-    "manager": {"password": "manager123", "role": Role.PFL_MANAGER, "name": "Manager Demo"},
-    "admin":   {"password": "admin123",   "role": Role.PFL_ADMIN,   "name": "Admin Demo"},
-}
+def _load_demo_users() -> dict[str, dict]:
+    users: dict[str, dict] = {}
+
+    def add_user(prefix: str, role: Role, default_name: str) -> None:
+        username = os.environ.get(f"DEMO_{prefix}_USERNAME", "").strip()
+        password = os.environ.get(f"DEMO_{prefix}_PASSWORD", "").strip()
+        name = os.environ.get(f"DEMO_{prefix}_NAME", default_name).strip()
+        if username and password:
+            users[username.lower()] = {"password": password, "role": role, "name": name}
+
+    add_user("OFFICER", Role.PFL_OFFICER, "Officer")
+    add_user("MANAGER", Role.PFL_MANAGER, "Manager")
+    add_user("ADMIN", Role.PFL_ADMIN, "Admin")
+    return users
+
+
+DEMO_USERS = _load_demo_users()
 
 
 # ── Models ───────────────────────────────────────────────────────
