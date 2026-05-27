@@ -1253,15 +1253,19 @@ function CallPageInner() {
       setKycAadhaarImageData(aadhaarImage);
       setKycPanImageData(panImage);
 
-      const res = await fetch(`${BACKEND}/api/kyc/verify-documents`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          aadhaar_image: aadhaarImage,
-          pan_image: panImage,
-          selfie_image: capturedSelfie,
-        }),
-      });
+      const { res } = await fetchWithBackendFallback(
+        "/api/kyc/verify-documents",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            aadhaar_image: aadhaarImage,
+            pan_image: panImage,
+            selfie_image: capturedSelfie,
+          }),
+        },
+        30000,
+      );
       const data = (await res.json()) as KycDocVerifyResult;
       setKycVerifyResult(data);
 
