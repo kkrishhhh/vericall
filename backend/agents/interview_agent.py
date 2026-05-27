@@ -18,7 +18,58 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agents.state import AgentState
+from agents.state import AgentState, ConversationState
+
+
+# ── Conversation state helpers ───────────────────────────────────
+
+def _build_conversation_state(profile: AgentState | Any) -> ConversationState:
+    missing: list[str] = []
+    if not (getattr(profile, 'name', '') or '').strip():
+        missing.append('name')
+    if not (getattr(profile, 'employment_type', '') or '').strip():
+        missing.append('employment_type')
+    if not getattr(profile, 'monthly_income', 0.0):
+        missing.append('monthly_income')
+    if not (getattr(profile, 'loan_type', '') or '').strip():
+        missing.append('loan_type')
+    if not getattr(profile, 'requested_loan_amount', 0.0):
+        missing.append('requested_loan_amount')
+    if not getattr(profile, 'declared_age', 0):
+        missing.append('declared_age')
+    if not (getattr(profile, 'consent_text', '') or '').strip():
+        missing.append('consent')
+
+    next_question = ''
+    if missing:
+        if 'name' in missing:
+            next_question = 'May I know your full name, please?'
+        elif 'employment_type' in missing:
+            next_question = 'Can you tell me what type of work you do?'
+        elif 'monthly_income' in missing:
+            next_question = 'What is your monthly income in INR?'
+        elif 'loan_type' in missing:
+            next_question = 'Which kind of loan are you looking for?'
+        elif 'requested_loan_amount' in missing:
+            next_question = 'How much loan amount do you need in rupees?'
+        elif 'declared_age' in missing:
+            next_question = 'What is your age?'
+        elif 'consent' in missing:
+            next_question = 'Do you provide explicit consent for this video session to be recorded and securely stored? Please answer Yes or No.'
+
+    return ConversationState(
+        questions_asked=[field for field in [
+            'name',
+            'employment_type',
+            'monthly_income',
+            'loan_type',
+            'requested_loan_amount',
+            'declared_age',
+            'consent',
+        ] if field not in missing],
+        missing_fields=missing,
+        next_question=next_question,
+    )
 
 
 # ── Tool 1: calculate_preapproval ────────────────────────────────
@@ -269,4 +320,5 @@ async def run_interview_agent(state: AgentState, payload: dict[str, Any]) -> Age
             error=str(e),
         )
 
+    state.conversation_state = _build_conversation_state(profile)
     return state

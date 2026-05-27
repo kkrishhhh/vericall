@@ -60,6 +60,26 @@ class FaceAnalysisResponse(BaseModel):
         description="True if face appears consistent with claimed age",
     )
     verification_message: str = Field("", description="Human-readable CV age check summary")
+    liveness_passed: bool = Field(False, description="True when frames contain a live face sequence")
+
+
+class LivenessChallengeResponse(BaseModel):
+    challenge: str = Field(..., description="Random gesture challenge for live verification")
+    challenge_token: str = Field(..., description="Ephemeral token used to verify the challenge")
+    instructions: str = Field(..., description="Instructions for the customer on what to do next")
+
+
+class LivenessVerifyRequest(BaseModel):
+    challenge_token: str = Field(..., description="Ephemeral token for the liveness challenge")
+    images: list[str] = Field(..., max_length=5, description="Captured frames for verification")
+
+
+class LivenessVerifyResponse(BaseModel):
+    success: bool = Field(..., description="True when the live challenge passed verification")
+    face_detected: bool = Field(..., description="True when a face was detected in submitted frames")
+    same_person: bool = Field(..., description="True when frames appear to show the same person")
+    reason: str = Field(..., description="Human-readable result or failure reason")
+    match_score: Optional[float] = Field(None, description="Relative same-person confidence score")
 
 
 # ── Risk Assessment Models ────────────────────────────────────

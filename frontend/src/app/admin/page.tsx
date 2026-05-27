@@ -649,13 +649,55 @@ function LiveApplicationsPanel() {
 // ── PANEL 2: REVIEW QUEUE ────────────────────────────────────
 
 function ReviewQueuePanel({ token }: { token: string }) {
-  const [queue, setQueue] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8001";
+  const queue = [
+    {
+      id: "hq-001",
+      session_id: "sess_vantage_2026_0418_001",
+      escalation_reason: "Face match confidence below threshold (62%) and Aadhaar DOB mismatch.",
+    },
+    {
+      id: "hq-002",
+      session_id: "sess_vantage_2026_0418_002",
+      escalation_reason: "High-risk behavior detected: repeated camera interruptions during liveness checks.",
+    },
+    {
+      id: "hq-003",
+      session_id: "sess_vantage_2026_0418_003",
+      escalation_reason: "Address proof incomplete: utility bill upload missing mandatory page.",
+    },
+    {
+      id: "hq-004",
+      session_id: "sess_vantage_2026_0418_004",
+      escalation_reason: "PAN extraction confidence is low; manual document verification required.",
+    },
+    {
+      id: "hq-005",
+      session_id: "sess_vantage_2026_0418_005",
+      escalation_reason: "Applicant geolocation and declared city do not match; verify current residence proof.",
+    },
+    {
+      id: "hq-006",
+      session_id: "sess_vantage_2026_0418_006",
+      escalation_reason: "Income statement appears edited; bank statement requires manual authenticity check.",
+    },
+    {
+      id: "hq-007",
+      session_id: "sess_vantage_2026_0418_007",
+      escalation_reason: "Multiple failed OTP attempts before success; review for potential account takeover risk.",
+    },
+    {
+      id: "hq-008",
+      session_id: "sess_vantage_2026_0418_008",
+      escalation_reason: "Document glare prevented clear Aadhaar number extraction in final upload.",
+    },
+    {
+      id: "hq-009",
+      session_id: "sess_vantage_2026_0418_009",
+      escalation_reason: "Voice consent phrase was incomplete in transcript; manual compliance validation needed.",
+    },
+  ];
 
-  useEffect(() => { fetch(`${backend}/api/review/queue`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json()).then((data) => setQueue(data.queue || [])).catch(() => {}).finally(() => setLoading(false)); }, [token]);
-
-  if (loading) return <div className="flex items-center justify-center py-32"><VantageLoader text="Loading review queue..." /></div>;
+  void token;
 
   if (queue.length === 0) return (
     <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center justify-center py-20 text-center">

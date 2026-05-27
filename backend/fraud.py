@@ -2,7 +2,7 @@
 
 from models import CustomerData, FaceAnalysisResponse, FraudFlag
 from services.risk_engine import build_decision_reasons, compute_risk_score
-from services.bureau import get_bureau_snapshot
+from services.bureau import MockBureauProvider
 from services.propensity import compute_propensity
 from age_verification import fraud_flags_for_visual_age
 
@@ -122,7 +122,7 @@ def assess_risk(
 
     risk_score = compute_risk_score(risk_band, flags, customer)
     decision_reasons = build_decision_reasons(risk_band, flags, eligible, reason)
-    bureau_snapshot = bureau or get_bureau_snapshot(customer)
+    bureau_snapshot = bureau or MockBureauProvider.get_snapshot(customer)
     propensity = compute_propensity(customer, risk_band, risk_score, bureau_snapshot)
 
     reason_codes = [f.flag for f in flags]
