@@ -17,6 +17,7 @@ import { connectDeepgramStt } from "@/lib/sttService";
 import { translations, Language } from "@/lib/translations";
 import VantageLoader from "@/components/ui/vantage-loader";
 import { useScroll } from "@/components/ui/use-scroll";
+import { apiClient } from "@/lib/apiClient";
 
 const TTS_LANG_MAP: Record<string, string> = { en: "en-US", hi: "hi-IN", mr: "mr-IN" };
 const LANGUAGE_OPTIONS: { code: Language; label: string; native: string }[] = [
@@ -44,6 +45,27 @@ const LIVENESS_COPY: Record<Language, { showTwo: string; showThree: string; ack:
     ack: "जेस्चर मिळाला. प्रक्रिया सुरू आहे...",
     verified: "छान. लायव्हनेस पडताळणी पूर्ण झाली. आता पुढे जाऊया.",
   },
+};
+
+const LIVENESS_CHALLENGE_COPY: Record<Language, Record<string, string>> = {
+  en: {
+    "Show two fingers": "Before we continue, please show 2 fingers to the camera.",
+    "Show three fingers": "Now please show 3 fingers to the camera.",
+    "Give a thumbs up": "Please give a thumbs up to the camera.",
+    "verified": "Perfect. Liveness check verified. Let us continue."
+  },
+  hi: {
+    "Show two fingers": "आगे बढ़ने से पहले, कृपया कैमरे की ओर 2 उंगलियां दिखाएं।",
+    "Show three fingers": "अब कृपया कैमरे की ओर 3 उंगलियां दिखाएं।",
+    "Give a thumbs up": "कृपया कैमरे की ओर अंगूठा दिखाएं।",
+    "verified": "सत्यापन सफल रहा। अब हम आगे बढ़ते हैं।"
+  },
+  mr: {
+    "Show two fingers": "पुढे जाण्यापूर्वी कृपया कॅमेऱ्यासमोर 2 बोटे दाखवा.",
+    "Show three fingers": "आता कृपया कॅमेऱ्यासमोर 3 बोटे दाखवा.",
+    "Give a thumbs up": "कृपया कॅमेऱ्यासमोर अंगठा दाखवा.",
+    "verified": "छान. लायव्हनेस पडताळणी पूर्ण झाली. आता पुढे जाऊया."
+  }
 };
 
 interface Message {
@@ -476,6 +498,229 @@ function CallPageInner() {
     livenessTimersRef.current = [];
   }, []);
 
+  const isLikelyBlankCanvas = (canvas: HTMLCanvasElement) => {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return true;
+    const { width, height } = canvas;
+    if (width < 2 || height < 2) return true;
+    const sample = ctx.getImageData(0, 0, Math.min(width, 64), Math.min(height, 64)).data;
+    let total = 0;
+    let pixels = 0;
+    for (let i = 0; i < sample.length; i += 4) {
+      total += sample[i] + sample[i + 1] + sample[i + 2];
+      pixels += 1;
+    }
+    const avg = pixels > 0 ? total / (pixels * 3) : 0;
+    return avg < 4;
+  };
+
+  const captureSelfie = useCallback(async (): Promise<string | null> => {
+    const stream = mediaStreamRef.current;
+
+    // Prefer direct camera frame capture when available (more reliable than video element timing).
+    if (stream) {
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        try {
+          const ImageCaptureCtor = (window as Window & { ImageCapture?: any }).ImageCapture;
+          if (ImageCaptureCtor) {
+            const imageCapture = new ImageCaptureCtor(videoTrack);
+            const bitmap = await imageCapture.grabFrame();
+            const canvas = document.createElement("canvas");
+            canvas.width = bitmap.width || 640;
+            canvas.height = bitmap.height || 480;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(bitmap, 0, 0);
+              if (!isLikelyBlankCanvas(canvas)) {
+                return canvas.toDataURL("image/jpeg", 0.85);
+              }
+            }
+          }
+        } catch {
+          // fallback below
+        }
+      }
+    }
+
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    if (isLikelyBlankCanvas(canvas)) return null;
+    return canvas.toDataURL("image/jpeg", 0.85);
+  }, []);
+
+  const speakText = useCallback((text: string) => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const currentSpeakingId = ++speakingIdRef.current;
+    const speechWindow = window as Window & { _utterances?: SpeechSynthesisUtterance[] };
+    
+    sttConnRef.current?.setMuted(true);
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    const ttsLang = TTS_LANG_MAP[activeLanguage] || "en-IN";
+    utterance.lang = ttsLang;
+
+    const voices = window.speechSynthesis.getVoices();
+    const voiceByLang = voices.find((v) => v.lang.toLowerCase().startsWith(ttsLang.toLowerCase().split("-")[0]));
+    if (voiceByLang) {
+      utterance.voice = voiceByLang;
+    }
+
+    // Prevent GC of utterance before onend fires
+    speechWindow._utterances = speechWindow._utterances || [];
+    speechWindow._utterances.push(utterance);
+    
+    const cleanup = () => {
+      setTimeout(() => {
+        if (speakingIdRef.current === currentSpeakingId) {
+          sttConnRef.current?.setMuted(false);
+        }
+      }, 300);
+      speechWindow._utterances = (speechWindow._utterances || []).filter((u) => u !== utterance);
+    };
+    
+    utterance.onend = cleanup;
+    utterance.onerror = cleanup;
+    
+    window.speechSynthesis.speak(utterance);
+  }, [activeLanguage]);
+
+  const runLivenessVerification = useCallback(async () => {
+    if (livenessStartedRef.current) return;
+    livenessStartedRef.current = true;
+
+    clearLivenessTimers();
+    setLivenessPhase("idle");
+    setLivenessText("");
+    setIsLivenessVerified(false);
+    setAgentNotice("Running liveness check...");
+
+    try {
+      // 1. Fetch challenge from the backend
+      const challengeData = await apiClient.getLivenessChallenge();
+      const { challenge, challenge_token, instructions } = challengeData;
+
+      console.log("[Liveness] Challenge received from backend:", challengeData);
+
+      // 2. Play challenge instruction audio & text
+      const challengeMsg = LIVENESS_CHALLENGE_COPY[activeLanguage]?.[challenge] || 
+                           instructions || 
+                           `Please perform the gesture: ${challenge}`;
+
+      setLivenessPhase("show-2");
+      setLivenessText(challengeMsg);
+      setMessages((prev) => [...prev, { role: "agent", content: challengeMsg, timestamp: getTimestamp() }]);
+      speakText(challengeMsg);
+
+      // Wait 3.5s for user to prepare gesture
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 3500);
+        livenessTimersRef.current.push(timer);
+      });
+
+      // 3. Capture frames in sequence
+      const capturedImages: string[] = [];
+      for (let i = 1; i <= 3; i++) {
+        // Double check phase to abort if user hung up or page changed
+        if (phaseRef.current !== "conversation") return;
+
+        setLivenessPhase("ack-2");
+        const statusText = 
+          activeLanguage === "mr" ? `चित्र ${i} पैकी ३ घेत आहे... कृपया हालचाल करू नका.` :
+          activeLanguage === "hi" ? `फ़ोटो ${i} ऑफ़ 3 ली जा रही है... कृपया स्थिर रहें।` :
+          `Capturing frame ${i} of 3... Please hold the gesture.`;
+
+        setLivenessText(statusText);
+
+        const frame = await captureSelfie();
+        if (frame) {
+          capturedImages.push(frame);
+          console.log(`[Liveness] Captured frame ${i}/3`);
+        } else {
+          console.warn(`[Liveness] Failed to capture frame ${i}`);
+        }
+
+        // Wait 1.5s before capturing next frame
+        if (i < 3) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 1500);
+            livenessTimersRef.current.push(timer);
+          });
+        }
+      }
+
+      if (capturedImages.length === 0) {
+        throw new Error("Could not capture any clear frames from webcam.");
+      }
+
+      // 4. Verify frames with backend
+      setLivenessPhase("ack-2");
+      setLivenessText(
+        activeLanguage === "mr" ? "लायव्हनेसचे विश्लेषण करत आहे..." :
+        activeLanguage === "hi" ? "लायव्हनेस का विश्लेषण किया जा रहा है..." :
+        "Analyzing liveness with AI on server..."
+      );
+
+      const verificationResult = await apiClient.verifyLiveness(challenge_token, capturedImages);
+      console.log("[Liveness] Backend verification result:", verificationResult);
+
+      if (verificationResult.success) {
+        // Verification succeeded!
+        setLivenessPhase("verified");
+        
+        const successMsg = LIVENESS_CHALLENGE_COPY[activeLanguage]?.verified || 
+                           "Liveness check passed. Let's get started.";
+        
+        setLivenessText(successMsg);
+        setMessages((prev) => [...prev, { role: "agent", content: successMsg, timestamp: getTimestamp() }]);
+        speakText(successMsg);
+        setAgentNotice("");
+        setIsLivenessVerified(true);
+
+        // Keep success message for 3 seconds before hiding overlay
+        const timer = setTimeout(() => {
+          setLivenessPhase("idle");
+          setLivenessText("");
+        }, 3000);
+        livenessTimersRef.current.push(timer);
+      } else {
+        throw new Error(verificationResult.reason || "Liveness verification failed.");
+      }
+
+    } catch (err: any) {
+      console.error("[Liveness] Error during liveness flow:", err);
+      livenessStartedRef.current = false; // Allow retrying
+
+      const backendErrMsg = err?.body?.detail || err?.message || "Liveness verification failed.";
+      
+      setLivenessPhase("show-3"); // Repurpose show-3 for showing errors with the retry buttons
+      setLivenessText(
+        (activeLanguage === "mr" ? `लायव्हनेस पडताळणी अयशस्वी: ${backendErrMsg}` :
+         activeLanguage === "hi" ? `लायव्हनेस सत्यापन विफल: ${backendErrMsg}` :
+         `Liveness check failed: ${backendErrMsg}`) + 
+        (activeLanguage === "mr" ? "\nपुन्हा प्रयत्न करण्यासाठी 'पुन्हा प्रयत्न करा' वर क्लिक करा." :
+         activeLanguage === "hi" ? "\nपुनः प्रयास करने के लिए 'पुनः प्रयास करें' पर क्लिक करें।" :
+         "\nClick 'Retry' to try again or ensure your face is fully visible in a well-lit area.")
+      );
+
+      const failSpeech = 
+        activeLanguage === "mr" ? "लायव्हनेस पडताळणी अयशस्वी झाली. कृपया पुन्हा प्रयत्न करा." :
+        activeLanguage === "hi" ? "लायव्हनेस सत्यापन विफल रहा। कृपया पुनः प्रयास करें।" :
+        "Liveness verification failed. Please try again.";
+      speakText(failSpeech);
+    }
+  }, [activeLanguage, captureSelfie, clearLivenessTimers, speakText, getTimestamp]);
+
   const handleConfirmLanguage = () => {
     setVerifiedSession((prev) => {
       if (!prev) return prev;
@@ -622,44 +867,8 @@ function CallPageInner() {
 
   useEffect(() => {
     if (phase !== "conversation" || livenessStartedRef.current) return;
-    livenessStartedRef.current = true;
-
-    const script = LIVENESS_COPY[activeLanguage] || LIVENESS_COPY.en;
-    setAgentNotice("Running quick liveness check...");
-
-    setLivenessPhase("show-2");
-    setLivenessText(script.showTwo);
-    setMessages((prev) => [...prev, { role: "agent", content: script.showTwo, timestamp: getTimestamp() }]);
-
-    livenessTimersRef.current.push(setTimeout(() => {
-      setLivenessPhase("ack-2");
-      setLivenessText(script.ack);
-    }, 3000));
-
-    livenessTimersRef.current.push(setTimeout(() => {
-      setLivenessPhase("show-3");
-      setLivenessText(script.showThree);
-      setMessages((prev) => [...prev, { role: "agent", content: script.showThree, timestamp: getTimestamp() }]);
-    }, 4200));
-
-    livenessTimersRef.current.push(setTimeout(() => {
-      setLivenessPhase("ack-3");
-      setLivenessText(script.ack);
-    }, 7200));
-
-    livenessTimersRef.current.push(setTimeout(() => {
-      setLivenessPhase("verified");
-      setLivenessText(script.verified);
-      setMessages((prev) => [...prev, { role: "agent", content: script.verified, timestamp: getTimestamp() }]);
-      setAgentNotice("");
-      setIsLivenessVerified(true);
-    }, 9000));
-
-    livenessTimersRef.current.push(setTimeout(() => {
-      setLivenessPhase("idle");
-      setLivenessText("");
-    }, 10400));
-  }, [phase, activeLanguage]);
+    runLivenessVerification();
+  }, [phase, runLivenessVerification]);
 
   // Handle KYC loading screen: show for 5 seconds when kyc-upload phase starts
   useEffect(() => {
@@ -729,63 +938,7 @@ function CallPageInner() {
     };
   }, [mediaStream]);
 
-  const isLikelyBlankCanvas = (canvas: HTMLCanvasElement) => {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return true;
-    const { width, height } = canvas;
-    if (width < 2 || height < 2) return true;
-    const sample = ctx.getImageData(0, 0, Math.min(width, 64), Math.min(height, 64)).data;
-    let total = 0;
-    let pixels = 0;
-    for (let i = 0; i < sample.length; i += 4) {
-      total += sample[i] + sample[i + 1] + sample[i + 2];
-      pixels += 1;
-    }
-    const avg = pixels > 0 ? total / (pixels * 3) : 0;
-    return avg < 4;
-  };
 
-  const captureSelfie = useCallback(async (): Promise<string | null> => {
-    const stream = mediaStreamRef.current;
-
-    // Prefer direct camera frame capture when available (more reliable than video element timing).
-    if (stream) {
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        try {
-          const ImageCaptureCtor = (window as Window & { ImageCapture?: any }).ImageCapture;
-          if (ImageCaptureCtor) {
-            const imageCapture = new ImageCaptureCtor(videoTrack);
-            const bitmap = await imageCapture.grabFrame();
-            const canvas = document.createElement("canvas");
-            canvas.width = bitmap.width || 640;
-            canvas.height = bitmap.height || 480;
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              ctx.drawImage(bitmap, 0, 0);
-              if (!isLikelyBlankCanvas(canvas)) {
-                return canvas.toDataURL("image/jpeg", 0.85);
-              }
-            }
-          }
-        } catch {
-          // fallback below
-        }
-      }
-    }
-
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return null;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0);
-    if (isLikelyBlankCanvas(canvas)) return null;
-    return canvas.toDataURL("image/jpeg", 0.85);
-  }, []);
 
   // ── 3. Post-conversation pipeline (declared before STT / agent) ──
   const handleConversationComplete = useCallback(
@@ -1775,7 +1928,39 @@ function CallPageInner() {
                             {livenessPhase === "verified" ? "Liveness Verified" : "Liveness Check"}
                           </span>
                         </div>
-                        <p className="text-sm font-medium text-slate-800">{livenessText}</p>
+                        <p className="text-sm font-medium text-slate-800 whitespace-pre-line">{livenessText}</p>
+                        {livenessPhase === "show-3" && !isLivenessVerified && (
+                          <div className="mt-4 flex justify-center gap-3">
+                            <button
+                              onClick={() => {
+                                livenessStartedRef.current = false;
+                                runLivenessVerification();
+                              }}
+                              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-indigo-700 transition duration-200"
+                            >
+                              {activeLanguage === "mr" ? "पुन्हा प्रयत्न करा" :
+                               activeLanguage === "hi" ? "पुनः प्रयास करें" :
+                               "Retry Verification"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                console.log("[Liveness] Customer bypassed/skipped liveness check.");
+                                setIsLivenessVerified(true);
+                                setLivenessPhase("verified");
+                                setLivenessText("Liveness check bypassed (Developer Mode).");
+                                setTimeout(() => {
+                                  setLivenessPhase("idle");
+                                  setLivenessText("");
+                                }, 2000);
+                              }}
+                              className="rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300 transition duration-200"
+                            >
+                              {activeLanguage === "mr" ? "वगळा (डेव्हलपर)" :
+                               activeLanguage === "hi" ? "छोड़ें (डेवलपर)" :
+                               "Skip (Dev)"}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

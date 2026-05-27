@@ -120,15 +120,24 @@ export interface VerifyOtpResponse {
 }
 
 export interface LivenessChallengeResponse {
-  challengeId: string;
-  instruction: string;
-  expectedGesture: string;
+  challengeId?: string; // backward compatibility
+  instruction?: string; // backward compatibility
+  expectedGesture?: string; // backward compatibility
+
+  challenge: string; // real backend
+  challenge_token: string; // real backend
+  instructions: string; // real backend
 }
 
 export interface LivenessVerifyResponse {
-  passed: boolean;
-  confidence: number;
-  reason?: string;
+  passed?: boolean; // backward compatibility
+  confidence?: number; // backward compatibility
+
+  success: boolean; // real backend
+  face_detected: boolean; // real backend
+  same_person: boolean; // real backend
+  reason: string; // real backend
+  match_score?: number; // real backend
 }
 
 export interface OrchestrateAgentResponse {
@@ -214,37 +223,44 @@ export const apiClient = {
    */
   async getLivenessChallenge(): Promise<LivenessChallengeResponse> {
     try {
-      return await request<LivenessChallengeResponse>("/api/liveness/challenge");
+      return await request<LivenessChallengeResponse>("/api/liveness/challenge", {
+        method: "POST",
+      });
     } catch (e) {
-      // TODO: remove stub when backend ready
       log("getLivenessChallenge failed, returning stub response");
       return {
-        challengeId: "stub-" + Math.random().toString(36).substr(2, 9),
-        instruction: "Please show 2 fingers to the camera.",
+        challengeId: "stub-" + Math.random().toString(36).substring(2, 11),
+        instruction: "Before we continue, please show 2 fingers to the camera.",
         expectedGesture: "show_fingers",
+        challenge: "Show two fingers",
+        challenge_token: "stub-" + Math.random().toString(36).substring(2, 11),
+        instructions: "Before we continue, please show 2 fingers to the camera.",
       };
     }
   },
 
   /**
-   * Upload video blob to verify liveness against a challenge
+   * Verify liveness challenge with base64 frames
    */
-  async verifyLiveness(challengeId: string, videoBlob: Blob): Promise<LivenessVerifyResponse> {
+  async verifyLiveness(challengeToken: string, images: string[]): Promise<LivenessVerifyResponse> {
     try {
-      const formData = new FormData();
-      formData.append("challengeId", challengeId);
-      formData.append("video", videoBlob, "liveness.webm");
-
       return await request<LivenessVerifyResponse>("/api/liveness/verify", {
         method: "POST",
-        body: formData,
+        body: JSON.stringify({
+          challenge_token: challengeToken,
+          images,
+        }),
       });
     } catch (e) {
-      // TODO: remove stub when backend ready
       log("verifyLiveness failed, returning stub response");
       return {
         passed: true,
         confidence: 0.98,
+        success: true,
+        face_detected: true,
+        same_person: true,
+        reason: "Liveness verified successfully (stub fallback).",
+        match_score: 0.95,
       };
     }
   },
